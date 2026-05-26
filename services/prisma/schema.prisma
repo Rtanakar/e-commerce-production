@@ -1,0 +1,108 @@
+// ============================================================================
+// schema.prisma — Database schema (Postgres)
+// ============================================================================
+// Prisma 7 + driver adapter (PG) pattern - edge-runtime compatible
+// generated client custom output me - src/generated/prisma/
+// ============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserRole {
+  CUSTOMER
+  VENDOR
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+// ============================================================================
+// USER - core auth entity
+// ============================================================================
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  password      String
+  name          String?
+  phone         String?    @unique
+  emailVerified DateTime?
+  phoneVerified DateTime?
+  image         String?
+  role          UserRole   @default(CUSTOMER)
+  status        UserStatus @default(ACTIVE)
+
+  // Soft delete - data preserve compliance ke liye
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  vendorProfile VendorProfile?
+  addresses     Address[]
+
+  @@index([email])
+  @@index([status, role])
+  @@map("users")
+}
+
+// ============================================================================
+// VENDOR PROFILE - 1:1 with User
+// ============================================================================
+model VendorProfile {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shopName    String    @unique
+  shopSlug    String    @unique
+  description String?
+  gstNumber   String?
+  isVerified  Boolean   @default(false)
+  verifiedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shopSlug])
+  @@index([isVerified])
+  @@map("vendor_profiles")
+}
+
+// ============================================================================
+// ADDRESS - shipping addresses
+// ============================================================================
+model Address {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName  String
+  phone     String
+  line1     String
+  line2     String?
+  city      String
+  state     String
+  pincode   String
+  country   String  @default("IN")
+  isDefault Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("addresses")
+}

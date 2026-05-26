@@ -1,0 +1,77 @@
+# ============================================================================
+# docker-compose.yml - Local dev infrastructure
+# ============================================================================
+# Postgres + Redis + Upstash REST emulator
+# Production me ye managed services hote hai (RDS, Upstash cloud)
+#
+# Usage:
+#   docker-compose up -d        # start
+#   docker-compose down         # stop (data preserved)
+#   docker-compose down -v      # stop + delete data
+#   docker-compose logs -f      # follow logs
+# ============================================================================
+
+services:
+  # ==========================================================================
+  # PostgreSQL 17
+  # ==========================================================================
+  postgres:
+    image: postgres:17-alpine
+    container_name: ecom-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ecommerce
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ecommerce"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ==========================================================================
+  # Redis 7 (local cache + session store)
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: ecom-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ==========================================================================
+  # Upstash Redis HTTP emulator
+  # ==========================================================================
+  # @upstash/redis SDK HTTP/REST chahta hai, raw Redis nahi
+  # Production me real Upstash, local me ye proxy
+  # Same SDK code dono jagah work karega
+  # ==========================================================================
+  serverless-redis-http:
+    image: hiett/serverless-redis-http:latest
+    container_name: ecom-upstash-local
+    restart: unless-stopped
+    ports:
+      - "8079:80"
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: example_token
+      SRH_CONNECTION_STRING: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

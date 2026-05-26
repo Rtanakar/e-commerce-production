@@ -1,0 +1,9 @@
+# queues/ - BullMQ queue definitions (future)
+#
+# Yahan har feature ka queue define hoga:
+#   - email.queue.ts      (welcome email, password reset)
+#   - notification.queue.ts (push, SMS)
+#   - search-index.queue.ts (Meilisearch sync)
+#   - order-events.queue.ts (Kafka producer)
+#
+# Pattern: queue file me producer code, workers/ folder me consumer

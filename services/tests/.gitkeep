@@ -1,0 +1,13 @@
+# tests/ - Vitest/Jest tests
+#
+# Structure:
+#   tests/
+#     unit/
+#       auth.service.test.ts
+#       password.service.test.ts
+#     integration/
+#       auth.routes.test.ts
+#     e2e/
+#       full-checkout.test.ts
+#
+# Run: pnpm test

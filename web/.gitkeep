@@ -1,0 +1,6 @@
+# web/ - Next.js 16 frontend
+#
+# Setup baad me - abhi services/ pe focus
+#
+# Future commands:
+#   npx create-next-app@latest web --typescript --tailwind --app

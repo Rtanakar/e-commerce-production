@@ -1,0 +1,9 @@
+# workers/ - BullMQ workers (consumers) + Kafka consumers
+#
+# Files:
+#   - email.worker.ts        (BullMQ email consumer)
+#   - notification.worker.ts (push/SMS consumer)
+#   - order-events.worker.ts (Kafka consumer)
+#
+# Workers separate process me chalte hai - Docker compose me alag container
+# package.json me alag script: "worker:email": "tsx src/workers/email.worker.ts"
