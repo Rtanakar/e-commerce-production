@@ -1,65 +1,87 @@
 // ============================================================================
-// rate-limit.ts - Upstash Redis backed distributed rate limiter
+// rate-limit.ts - Distributed rate limiter (express-rate-limit + Redis)
 // ============================================================================
-// Distributed - multiple instances share counters via Redis
-// Memory store production-broken (har instance ka apna counter, total limit blown)
+// Industry standard for long-running Node servers:
+//   - express-rate-limit (middleware)
+//   - rate-limit-redis (distributed store, works with ioredis)
 //
-// Two-layer defense:
+// Why distributed?
+//   Memory store production-broken - har instance ka apna counter
+//   2 instances + 100 req/min limit → user 200 req/min effectively
+//   Redis store - sab instances share karte hai counter
+//
+// Two-layer defense pattern:
 //   1. CDN/Cloudflare WAF - L4/L7 DDoS (millions of RPS)
-//   2. This middleware - L7 application logic (per-user, per-endpoint)
+//   2. This middleware    - L7 application logic (per-user, per-endpoint)
 // ============================================================================
 
-import type { Request, Response, NextFunction } from "express";
-import type { Ratelimit } from "@upstash/ratelimit";
-import { RateLimiters } from "../lib/redis.js";
-import { TooManyRequestsError } from "../utils/errors.js";
+import rateLimit, { type Options } from "express-rate-limit";
+import { RedisStore, type RedisReply } from "rate-limit-redis";
+import type { Request } from "express";
+import { redis } from "../lib/redis.js";
+import { env } from "../config/env.js";
+import { ApiResponseBuilder } from "../interfaces/api-response.js";
+import { ErrorCode } from "../utils/http-status.js";
 
-// Key extractor - user ho to userId, na ho to IP
+// ============================================================================
+// Redis store factory - prefix se different limiters isolated
+// ============================================================================
+function makeStore(prefix: string): RedisStore {
+  return new RedisStore({
+    // ioredis se compatible call - sendCommand takes args array
+    sendCommand: (...args: string[]) => redis.call(...args) as Promise<RedisReply>,
+    prefix: `rl:${prefix}:`,
+  });
+}
+
+// ============================================================================
+// Key extractor - userId (logged-in) ya IP (anonymous)
+// ============================================================================
 // Shared IP (offices, NAT) users galat block na ho - userId preferred
-function getRateLimitKey(req: Request): string {
+function keyGenerator(req: Request): string {
   return req.user?.sub ?? req.ip ?? "anonymous";
 }
 
 // ============================================================================
-// Generic rate limiter middleware factory
+// Common config - extracted for DRY
 // ============================================================================
-export function rateLimit(limiter: Ratelimit) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const { success, limit, remaining, reset } = await limiter.limit(getRateLimitKey(req));
-
-      // Standard rate-limit response headers (RFC draft)
-      res.setHeader("X-RateLimit-Limit", limit);
-      res.setHeader("X-RateLimit-Remaining", remaining);
-      res.setHeader("X-RateLimit-Reset", Math.ceil(reset / 1000));
-
-      if (!success) {
-        const retryAfter = Math.max(1, Math.ceil((reset - Date.now()) / 1000));
-        res.setHeader("Retry-After", retryAfter);
-        return next(new TooManyRequestsError());
-      }
-      next();
-    } catch (err) {
-      // Fail-OPEN: Redis down → service available rahe
-      // Tradeoff: availability > strict limiting (most apps prefer this)
-      // Finance/auth-critical: fail-CLOSED preferred (uncomment to switch)
-      req.log?.warn({ err }, "Rate limit check failed - allowing request (fail-open)");
-      next();
-      // To fail-closed instead:
-      // return next(new ServiceUnavailableError());
-    }
+function baseConfig(prefix: string, max: number, windowMs: number): Partial<Options> {
+  return {
+    windowMs,
+    max,
+    standardHeaders: "draft-7", // RateLimit-* headers (RFC draft)
+    legacyHeaders: false, // X-RateLimit-* (deprecated)
+    keyGenerator,
+    store: makeStore(prefix),
+    // Fail-OPEN on Redis outage - availability > strict limiting
+    // (For finance/auth, consider fail-CLOSED - uncomment skipFailedRequests logic)
+    skip: () => false,
+    handler: (req, res, _next, options) => {
+      res.status(options.statusCode).json({
+        ...ApiResponseBuilder.error(
+          ErrorCode.RATE_LIMITED,
+          "Too many requests, please try again later",
+        ),
+        requestId: req.id,
+      });
+    },
   };
 }
 
 // ============================================================================
-// Pre-configured limiters - common patterns
+// Pre-configured limiters
 // ============================================================================
-// Global       : every request - baseline DoS protection
-// Auth         : login/register - brute force prevention
-// OTP          : SMS cost expensive - tight limit
-// PasswordReset: email spam prevention
-// ============================================================================
-export const globalRateLimit = rateLimit(RateLimiters.global);
-export const authRateLimit = rateLimit(RateLimiters.auth);
-export const otpRateLimit = rateLimit(RateLimiters.otp);
-export const passwordResetRateLimit = rateLimit(RateLimiters.passwordReset);
+
+// Global - baseline DoS protection on every request
+export const globalRateLimit = rateLimit(
+  baseConfig("global", env.RATE_LIMIT_MAX, env.RATE_LIMIT_WINDOW_MS),
+);
+
+// Auth (login/register) - brute force prevention
+export const authRateLimit = rateLimit(baseConfig("auth", 10, 15 * 60 * 1000));
+
+// OTP send - SMS cost expensive
+export const otpRateLimit = rateLimit(baseConfig("otp", 3, 60 * 60 * 1000));
+
+// Password reset - email spam prevention
+export const passwordResetRateLimit = rateLimit(baseConfig("pwd-reset", 3, 60 * 60 * 1000));

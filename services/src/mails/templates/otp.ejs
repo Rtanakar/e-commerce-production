@@ -1,0 +1,20 @@
+<h2>Verify your <%= purpose %>
+</h2>
+
+<p>Hi <strong>
+    <%= name %>
+  </strong>, use the code below to continue:</p>
+
+<div class="otp-row">
+  <div class="otp-box">
+    <%= otp %>
+  </div>
+</div>
+
+<p class="muted">This code expires in <strong>
+    <%= ttlMinutes %> minutes
+  </strong>.</p>
+
+<p class="muted-sm">
+  If you didn't request this, you can safely ignore this email - someone may have entered your address by mistake.
+</p>

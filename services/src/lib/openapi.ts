@@ -19,6 +19,10 @@ import {
   loginSchema,
   refreshSchema,
   changePasswordSchema,
+  verifyOtpSchema,
+  resendOtpSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
   userRoleSchema,
 } from "../modules/auth/auth.validator.js";
 import { z } from "zod";
@@ -36,6 +40,10 @@ registry.register("RegisterRequest", registerSchema);
 registry.register("LoginRequest", loginSchema);
 registry.register("RefreshRequest", refreshSchema);
 registry.register("ChangePasswordRequest", changePasswordSchema);
+registry.register("VerifyOtpRequest", verifyOtpSchema);
+registry.register("ResendOtpRequest", resendOtpSchema);
+registry.register("ForgotPasswordRequest", forgotPasswordSchema);
+registry.register("ResetPasswordRequest", resetPasswordSchema);
 
 // User response schema
 const userResponseSchema = z
@@ -91,8 +99,20 @@ const errorResponseSchema = z
 registry.register("ErrorResponse", errorResponseSchema);
 
 // ============================================================================
-// Security scheme - JWT Bearer
+// Security schemes - JWT Bearer (access) + httpOnly Cookie (refresh)
 // ============================================================================
+// bearerAuth: client sends `Authorization: Bearer <access_token>` header
+// cookieAuth: browser auto-sends `rt` httpOnly cookie (Swagger UI also supports)
+// ============================================================================
+registry.registerComponent("securitySchemes", "cookieAuth", {
+  type: "apiKey",
+  in: "cookie",
+  name: "rt",
+  description:
+    "httpOnly refresh-token cookie. Set automatically by login/verify-otp endpoints. " +
+    "Browsers auto-send on /auth/refresh. Path-scoped to /api/v1/auth.",
+});
+
 const bearerAuth = registry.registerComponent("securitySchemes", "bearerAuth", {
   type: "http",
   scheme: "bearer",
@@ -234,6 +254,58 @@ registry.registerPath({
       content: { "application/json": { schema: successResponseSchema } },
     },
     401: errorResponse("Unauthorized or wrong current password"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: `${apiBase}/auth/verify-otp`,
+  tags: ["Auth"],
+  summary: "Verify email OTP",
+  description: "Verifies the OTP sent during registration. Returns tokens on success.",
+  request: { body: { content: { "application/json": { schema: verifyOtpSchema } } } },
+  responses: {
+    200: {
+      description: "OTP verified, tokens issued",
+      content: { "application/json": { schema: successResponseSchema } },
+    },
+    400: errorResponse("Invalid or expired OTP"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: `${apiBase}/auth/resend-otp`,
+  tags: ["Auth"],
+  summary: "Resend OTP",
+  request: { body: { content: { "application/json": { schema: resendOtpSchema } } } },
+  responses: {
+    200: { description: "OTP resent (or silent if user doesn't exist)" },
+    429: errorResponse("Cooldown active or hourly limit exceeded"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: `${apiBase}/auth/forgot-password`,
+  tags: ["Auth"],
+  summary: "Request password reset email",
+  request: { body: { content: { "application/json": { schema: forgotPasswordSchema } } } },
+  responses: {
+    200: { description: "Reset email sent (silent if user doesn't exist)" },
+    429: errorResponse("Too many requests"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: `${apiBase}/auth/reset-password`,
+  tags: ["Auth"],
+  summary: "Reset password via token",
+  request: { body: { content: { "application/json": { schema: resetPasswordSchema } } } },
+  responses: {
+    200: { description: "Password reset" },
+    400: errorResponse("Invalid or expired token"),
   },
 });
 

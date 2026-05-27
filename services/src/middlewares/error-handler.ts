@@ -67,7 +67,28 @@ export function errorHandler(
     return;
   }
 
-  // ===== 3. JWT errors =====
+  // ===== 3. JSON body parse errors (body-parser SyntaxError) =====
+  // Invalid JSON in request body - Postman trailing comma, single quotes etc.
+  // body-parser throws SyntaxError with `type: "entity.parse.failed"` and `status: 400`
+  if (
+    err instanceof SyntaxError &&
+    "status" in err &&
+    (err as SyntaxError & { status?: number }).status === 400 &&
+    "body" in err
+  ) {
+    log.warn({ requestId, message: err.message }, "Invalid JSON body");
+    res.status(HttpStatus.BAD_REQUEST).json({
+      ...ApiResponseBuilder.error(
+        ErrorCode.BAD_REQUEST,
+        "Invalid JSON in request body. Check for trailing commas, single quotes, or unquoted keys.",
+        { hint: err.message },
+      ),
+      requestId,
+    });
+    return;
+  }
+
+  // ===== 4. JWT errors =====
   if (err instanceof jwt.TokenExpiredError) {
     res.status(HttpStatus.UNAUTHORIZED).json({
       ...ApiResponseBuilder.error(ErrorCode.TOKEN_EXPIRED, "Token has expired"),

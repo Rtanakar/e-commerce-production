@@ -1,9 +1,0 @@
-# mails/ - Email templates (React Email or MJML)
-#
-# Templates:
-#   - welcome.tsx
-#   - password-reset.tsx
-#   - order-confirmation.tsx
-#   - vendor-approved.tsx
-#
-# Render karke HTML banake Resend/SES/Postmark se bhejenge

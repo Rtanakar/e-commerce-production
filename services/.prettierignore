@@ -4,3 +4,10 @@ coverage
 *.md
 prisma/generated
 src/db/generated
+src/generated
+
+# EJS templates - Prettier HTML plugin breaks <%= %> tags
+# Templates have inline EJS expressions inside HTML attributes which Prettier
+# doesn't understand. Hands-off.
+*.ejs
+src/mails/templates/**/*.ejs

@@ -16,6 +16,8 @@
 import { env } from "./src/config/env.js";
 import { logger } from "./src/utils/logger.js";
 import { disconnectPrisma } from "./src/db/prisma.js";
+import { disconnectRedis } from "./src/lib/redis.js";
+import { closeMailer } from "./src/lib/mailer.js";
 import { printStartupBanner } from "./src/utils/startup-banner.js";
 import app from "@/app.js";
 
@@ -79,8 +81,12 @@ async function shutdown(signal: string): Promise<void> {
     }
 
     try {
-      // DB pool drain
-      await disconnectPrisma();
+      // Drain connections in parallel - DB + Redis + Mailer
+      await Promise.allSettled([
+        disconnectPrisma(),
+        disconnectRedis(),
+        closeMailer(),
+      ]);
       logger.info("✅ Cleanly shut down");
       clearTimeout(forceExitTimer);
       process.exit(0);

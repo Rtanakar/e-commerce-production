@@ -13,7 +13,7 @@
 // ============================================================================
 
 import { prisma } from "../db/prisma.js";
-import { redis } from "../lib/redis.js";
+import { pingRedis } from "../lib/redis.js";
 import { env } from "../config/env.js";
 import { logger } from "./logger.js";
 
@@ -37,23 +37,13 @@ async function checkDatabase(): Promise<ServiceStatus> {
 }
 
 // ----------------------------------------------------------------------------
-// Redis - Upstash REST ping
+// Redis - ioredis ping (TCP)
 // ----------------------------------------------------------------------------
 async function checkRedis(): Promise<ServiceStatus> {
-  try {
-    const result = await Promise.race([
-      redis.ping(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Redis ping timeout (2s)")), 2000),
-      ),
-    ]);
-    return result === "PONG"
-      ? { name: "Redis", status: "ok", detail: "PONG" }
-      : { name: "Redis", status: "fail", detail: `Unexpected: ${String(result)}` };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { name: "Redis", status: "fail", detail: msg };
-  }
+  const ok = await pingRedis(2000);
+  return ok
+    ? { name: "Redis", status: "ok", detail: "PONG" }
+    : { name: "Redis", status: "fail", detail: "ping failed" };
 }
 
 // ----------------------------------------------------------------------------

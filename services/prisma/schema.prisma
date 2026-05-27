@@ -1,8 +1,20 @@
 // ============================================================================
-// schema.prisma — Database schema (Postgres)
+// schema.prisma - Database schema
 // ============================================================================
-// Prisma 7 + driver adapter (PG) pattern - edge-runtime compatible
-// generated client custom output me - src/generated/prisma/
+// Multi-role User pattern (Amazon/Flipkart industry standard):
+//   - Single `User` table - shared auth (email, password, OTP, sessions)
+//   - `role` enum on User - CUSTOMER | VENDOR | ADMIN
+//   - 1:1 profile extensions:
+//       VendorProfile  - shop, GST, payouts
+//       CustomerProfile - preferences, default address ref (future)
+//
+// Why NOT separate User/Seller/Admin tables?
+//   - Auth code duplicated (login flow same for all)
+//   - Email uniqueness check across 3 tables = race conditions
+//   - JOIN complexity for shared features (reviews, support tickets)
+//   - Role changes hard (CUSTOMER → VENDOR)
+//
+// Industry consensus: single User + role + profile tables (Stripe, Shopify, Etsy)
 // ============================================================================
 
 generator client {
@@ -12,7 +24,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ============================================================================
@@ -26,65 +37,121 @@ enum UserRole {
 }
 
 enum UserStatus {
+  PENDING_VERIFICATION // signup ke baad email verify nahi
   ACTIVE
   SUSPENDED
   DELETED
 }
 
+enum VendorStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
 // ============================================================================
-// USER - core auth entity
+// USER - shared auth entity
 // ============================================================================
 model User {
   id            String     @id @default(cuid())
   email         String     @unique
   password      String
-  name          String?
+  name          String
   phone         String?    @unique
   emailVerified DateTime?
   phoneVerified DateTime?
-  image         String?
+  image         String? // avatar URL (Cloudinary/ImageKit)
   role          UserRole   @default(CUSTOMER)
-  status        UserStatus @default(ACTIVE)
+  status        UserStatus @default(PENDING_VERIFICATION)
 
-  // Soft delete - data preserve compliance ke liye
+  // Last login tracking - security audit trail
+  lastLoginAt DateTime?
+  lastLoginIp String?
+
+  // Soft delete - compliance (GDPR data preservation)
   deletedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
-  vendorProfile VendorProfile?
-  addresses     Address[]
+  // Relations - 1:1 profiles
+  vendorProfile   VendorProfile?
+  customerProfile CustomerProfile?
+  addresses       Address[]
 
   @@index([email])
   @@index([status, role])
+  @@index([role])
   @@map("users")
 }
 
 // ============================================================================
-// VENDOR PROFILE - 1:1 with User
+// CUSTOMER PROFILE - customer-specific data
+// ============================================================================
+// Currently lean - future fields: preferences, loyalty points, wishlist count
+// ============================================================================
+model CustomerProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Default shipping address (FK to Address)
+  defaultAddressId String?
+
+  // Marketing preferences
+  emailMarketingOptIn Boolean @default(false)
+  smsMarketingOptIn   Boolean @default(false)
+
+  // Loyalty (future expansion)
+  loyaltyPoints Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("customer_profiles")
+}
+
+// ============================================================================
+// VENDOR PROFILE - seller-specific data
 // ============================================================================
 model VendorProfile {
-  id          String    @id @default(cuid())
-  userId      String    @unique
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  shopName    String    @unique
-  shopSlug    String    @unique
+  id          String  @id @default(cuid())
+  userId      String  @unique
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shopName    String  @unique
+  shopSlug    String  @unique
   description String?
-  gstNumber   String?
-  isVerified  Boolean   @default(false)
-  verifiedAt  DateTime?
+  logo        String? // shop logo URL
+  banner      String? // shop banner URL
+
+  // Compliance - India: GST, PAN; US: EIN; UK: VAT etc.
+  gstNumber    String?
+  panNumber    String?
+  businessType String? // "INDIVIDUAL" | "PROPRIETORSHIP" | "PRIVATE_LIMITED" etc.
+
+  // Verification workflow
+  status          VendorStatus @default(PENDING_REVIEW)
+  verifiedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+
+  // Payouts - bank details encrypted at app layer
+  // Production: PCI-DSS - encrypt at column level or use Stripe Connect
+  bankAccountNumber String?
+  bankIfscCode      String?
+  bankAccountName   String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([shopSlug])
-  @@index([isVerified])
+  @@index([status])
   @@map("vendor_profiles")
 }
 
 // ============================================================================
-// ADDRESS - shipping addresses
+// ADDRESS - shipping addresses (multiple per user)
 // ============================================================================
 model Address {
   id        String  @id @default(cuid())
@@ -98,11 +165,14 @@ model Address {
   state     String
   pincode   String
   country   String  @default("IN")
+  // Address type - shipping/billing/both
+  type      String  @default("SHIPPING") // SHIPPING | BILLING | BOTH
   isDefault Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([userId, isDefault])
   @@map("addresses")
 }

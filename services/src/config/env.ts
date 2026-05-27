@@ -2,18 +2,17 @@
 // env.ts - Environment variable validation
 // ============================================================================
 // Fail-fast pattern - app start hone se PEHLE env validate
-// agar koi var missing/galat hai to exit, runtime crash nahi
-// Netflix/Stripe production me ye must - silent misconfig disaster banta hai
+// Missing/galat var → exit, runtime crash nahi
+// Netflix/Stripe production me must - silent misconfig disaster banta hai
 // ============================================================================
 
 import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
 
-// .env file load karo (dev only - prod me real env vars hote hai)
 loadDotenv();
 
 // ============================================================================
-// Schema definition
+// Schema
 // ============================================================================
 const EnvSchema = z.object({
   // ===== APP =====
@@ -23,21 +22,27 @@ const EnvSchema = z.object({
     .default("8080")
     .transform((v) => parseInt(v, 10))
     .pipe(z.number().int().positive()),
-  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+  LOG_LEVEL: z
+    .enum(["fatal", "error", "warn", "info", "debug", "trace"])
+    .default("info"),
 
   // API versioning
   API_PREFIX: z.string().default("api"),
   API_VERSION: z.string().default("v1"),
 
+  // App URLs - email links, OAuth callbacks etc.
+  APP_URL: z.string().url().default("http://localhost:3000"),
+
   // ===== DATABASE =====
   DATABASE_URL: z.string().url(),
 
-  // ===== REDIS (Upstash REST) =====
-  UPSTASH_REDIS_REST_URL: z.string().url(),
-  UPSTASH_REDIS_REST_TOKEN: z.string().min(1),
+  // ===== REDIS =====
+  // ioredis TCP URL format: rediss://default:<token>@<host>.upstash.io:6379
+  // (Upstash dashboard → "Connect" tab → ioredis)
+  // Local dev (docker): redis://localhost:6379
+  REDIS_URL: z.string().url(),
 
   // ===== JWT =====
-  // Minimum 32 chars - HS256 security best practice
   JWT_ACCESS_SECRET: z.string().min(32, "JWT_ACCESS_SECRET must be at least 32 chars"),
   JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET must be at least 32 chars"),
   JWT_ACCESS_EXPIRES_IN: z.string().default("15m"),
@@ -53,6 +58,11 @@ const EnvSchema = z.object({
   // ===== CORS =====
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
 
+  // ===== COOKIES =====
+  // Cookie domain - set for subdomain sharing (.shop.com → admin.shop.com, www.shop.com)
+  // Leave empty for localhost / single-domain apps
+  COOKIE_DOMAIN: z.string().optional(),
+
   // ===== RATE LIMIT =====
   RATE_LIMIT_WINDOW_MS: z
     .string()
@@ -63,8 +73,36 @@ const EnvSchema = z.object({
     .default("100")
     .transform((v) => parseInt(v, 10)),
 
-  // ===== OPTIONAL =====
+  // ===== EMAIL (SMTP - works with Gmail/SES/Resend/Mailtrap/Postmark) =====
+  // Industry pattern: nodemailer as abstraction layer, provider via env
+  // Dev:  Gmail App Password (this project) / Mailtrap sandbox
+  // Prod: AWS SES SMTP / Resend SMTP (Gmail rate-limited)
+  //
+  // SMTP_SERVICE: nodemailer shortcut - "gmail" auto-sets host/port/secure
+  // If set, takes precedence over SMTP_HOST/PORT/SECURE
+  SMTP_SERVICE: z.string().optional(),
+  SMTP_HOST: z.string().default("smtp.gmail.com"),
+  SMTP_PORT: z
+    .string()
+    .default("465")
+    .transform((v) => parseInt(v, 10)),
+  SMTP_SECURE: z
+    .string()
+    .default("true")
+    .transform((v) => v === "true"),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  EMAIL_FROM: z.string().default("E-Commerce <no-reply@shop.local>"),
+  EMAIL_FROM_NAME: z.string().default("E-Commerce"),
+
+  // ===== OBSERVABILITY =====
   SENTRY_DSN: z.string().optional(),
+
+  // ===== SWAGGER =====
+  ENABLE_DOCS: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 // ============================================================================
@@ -85,18 +123,13 @@ function parseEnv(): z.infer<typeof EnvSchema> {
   return result.data;
 }
 
-// ============================================================================
-// Frozen export - tampering prevent
-// ============================================================================
 export const env = Object.freeze(parseEnv());
 export type Env = typeof env;
 
-// Helper booleans - har file me string compare avoid
 export const isDev = env.NODE_ENV === "development";
 export const isProd = env.NODE_ENV === "production";
 export const isTest = env.NODE_ENV === "test";
 
-// CORS origins as array - cors middleware me direct use
 export const corsOrigins = env.CORS_ORIGIN.split(",")
   .map((o) => o.trim())
   .filter(Boolean);

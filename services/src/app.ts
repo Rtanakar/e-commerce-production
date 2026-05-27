@@ -231,6 +231,12 @@ if (env.NODE_ENV !== "production" || process.env["ENABLE_DOCS"] === "true") {
 }
 
 // ----- Auth module -----
+// http://localhost:8080/api/v1/auth/register
+// http://localhost:8080/api/v1/auth/login
+// http://localhost:8080/api/v1/auth/verify-otp
+// http://localhost:8080/api/v1/auth/resend-otp
+// http://localhost:8080/api/v1/auth/forgot-password
+// http://localhost:8080/api/v1/auth/reset-password
 app.use(`${apiBase}/auth`, authRoutes);
 
 // ----- FUTURE MODULES (uncomment as they are built) -----

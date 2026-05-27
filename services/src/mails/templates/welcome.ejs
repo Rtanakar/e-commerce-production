@@ -1,0 +1,24 @@
+<h2>Welcome aboard, <%= name %>!</h2>
+
+<p>Your account is verified and ready to go.</p>
+
+<% if (role==="VENDOR" ) { %>
+  <p>
+    Our team is reviewing your vendor details. Once approved, you'll be able to list products and start selling. We'll
+    notify you here as soon as it's done - typically within 24-48 hours.
+  </p>
+  <% } else { %>
+    <p>
+      Discover thousands of products from verified sellers. Your next favourite thing is just a click away.
+    </p>
+    <% } %>
+
+      <div class="btn-row">
+        <a href="<%= appUrl %>" class="btn">
+          <% if (role==="VENDOR" ) { %>Open Vendor Dashboard<% } else { %>Start Shopping<% } %>
+        </a>
+      </div>
+
+      <p class="muted-sm">
+        Need help? Reply to this email or visit our help centre - we're happy to assist.
+      </p>

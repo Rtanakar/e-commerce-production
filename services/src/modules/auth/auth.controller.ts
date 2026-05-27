@@ -1,64 +1,135 @@
 // ============================================================================
 // auth.controller.ts - HTTP layer (function-based)
 // ============================================================================
-// Thin controllers:
-//   - Request se data nikalo
-//   - Service function call
-//   - Response shape return
+// Thin controllers: extract req data → call service → format response.
+// NO business logic - sirf HTTP <-> Service translation.
 //
-// NO business logic - sirf HTTP <-> Service translation
-//
-// Industry pattern (Express): named async function exports
-// req.user assertions - requireAuth middleware ne already validate kar diya
+// Cookie strategy (FAANG dual-cookie):
+//   - Access token  → httpOnly cookie "at"  (path=/api/v1, 15m)  + response body
+//   - Refresh token → httpOnly cookie "rt"  (path=/auth, 30d)    + response body
+//   - Body has both → mobile/native clients without cookie jar work too
+//   - Browser/Postman → cookies auto-travel, no header juggling
 // ============================================================================
 
 import type { Request, Response } from "express";
 import * as authService from "./auth.service.js";
 import { ApiResponseBuilder } from "../../interfaces/api-response.js";
 import { HttpStatus } from "../../utils/http-status.js";
-import { UnauthorizedError } from "../../utils/errors.js";
-import type { RegisterDto, LoginDto, RefreshDto, ChangePasswordDto } from "./auth.validator.js";
+import { UnauthorizedError, BadRequestError } from "../../utils/errors.js";
+import {
+  setAuthCookies,
+  clearAuthCookies,
+  getRefreshTokenFromRequest,
+} from "../../utils/cookies.js";
+import type {
+  RegisterDto,
+  LoginDto,
+  ChangePasswordDto,
+  VerifyOtpDto,
+  ResendOtpDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
+  AuthResponseDto,
+} from "./auth.validator.js";
+
+// ============================================================================
+// Internal helper - send auth response (cookie + body) consistently
+// ============================================================================
+// Used by login / verifyOtp / refresh - all three flows return tokens.
+// Centralizing prevents drift between endpoints.
+// ============================================================================
+function sendAuthResponse(req: Request, res: Response, result: AuthResponseDto, status: number) {
+  // Set BOTH access + refresh as httpOnly cookies
+  //   - access  cookie "at" → path=/api/v1   → auto-sent on every API call
+  //   - refresh cookie "rt" → path=/api/v1/auth → only on auth endpoints
+  setAuthCookies(res, result.tokens);
+
+  // Body also returns tokens - for mobile/native clients that don't use cookies
+  res.status(status).json({
+    ...ApiResponseBuilder.success(result),
+    requestId: req.id,
+  });
+}
 
 // ============================================================================
 // POST /register
 // ============================================================================
+// Returns OTP-pending state, no tokens yet (issued at /verify-otp)
+// ============================================================================
 export async function register(req: Request, res: Response): Promise<void> {
   const result = await authService.register(req.body as RegisterDto);
+
+  // Differentiated UX based on email delivery outcome
+  const message = result.otpSent
+    ? "Account created. Please check your email for the verification code."
+    : "Account created, but we couldn't send the verification email right now. " +
+      "Please use the 'Resend OTP' endpoint to try again in a moment.";
+
   res.status(HttpStatus.CREATED).json({
-    ...ApiResponseBuilder.success(result),
+    ...ApiResponseBuilder.success({ ...result, message }),
     requestId: req.id,
   });
 }
 
 // ============================================================================
-// POST /login
+// POST /verify-otp - issues tokens, sets refresh cookie
+// ============================================================================
+export async function verifyOtp(req: Request, res: Response): Promise<void> {
+  const result = await authService.verifyOtp(req.body as VerifyOtpDto);
+  sendAuthResponse(req, res, result, HttpStatus.OK);
+}
+
+// ============================================================================
+// POST /resend-otp
+// ============================================================================
+export async function resendOtp(req: Request, res: Response): Promise<void> {
+  const result = await authService.resendOtp(req.body as ResendOtpDto);
+  res.status(HttpStatus.OK).json({
+    ...ApiResponseBuilder.success({
+      ...result,
+      message: "If an account exists, a new code has been sent.",
+    }),
+    requestId: req.id,
+  });
+}
+
+// ============================================================================
+// POST /login - issues tokens, sets refresh cookie
 // ============================================================================
 export async function login(req: Request, res: Response): Promise<void> {
-  const result = await authService.login(req.body as LoginDto);
-  res.status(HttpStatus.OK).json({
-    ...ApiResponseBuilder.success(result),
-    requestId: req.id,
+  const result = await authService.login(req.body as LoginDto, {
+    ip: req.ip ?? null,
   });
+  sendAuthResponse(req, res, result, HttpStatus.OK);
 }
 
 // ============================================================================
-// POST /refresh
+// POST /refresh - reads refresh token from cookie OR body
+// ============================================================================
+// Web client → cookie (auto-sent by browser)
+// Mobile/native → body (no cookie jar)
 // ============================================================================
 export async function refresh(req: Request, res: Response): Promise<void> {
-  const { refreshToken } = req.body as RefreshDto;
+  const refreshToken = getRefreshTokenFromRequest(req);
+  if (!refreshToken) {
+    throw new BadRequestError("Refresh token is required");
+  }
+
   const result = await authService.refreshTokens(refreshToken);
-  res.status(HttpStatus.OK).json({
-    ...ApiResponseBuilder.success(result),
-    requestId: req.id,
-  });
+  // Rotation - new refresh cookie replaces old one
+  sendAuthResponse(req, res, result, HttpStatus.OK);
 }
 
 // ============================================================================
-// POST /logout - protected
+// POST /logout - clears cookie + revokes session
 // ============================================================================
 export async function logout(req: Request, res: Response): Promise<void> {
   if (!req.user) throw new UnauthorizedError();
+
   await authService.logout(req.user.sub, req.user.sid);
+  // Clear the httpOnly cookie - browser drops it
+  clearAuthCookies(res);
+
   res.status(HttpStatus.OK).json({
     ...ApiResponseBuilder.success({ message: "Logout successful" }),
     requestId: req.id,
@@ -66,11 +137,14 @@ export async function logout(req: Request, res: Response): Promise<void> {
 }
 
 // ============================================================================
-// POST /logout-all - protected (all devices)
+// POST /logout-all - all devices + clear current cookie
 // ============================================================================
 export async function logoutAll(req: Request, res: Response): Promise<void> {
   if (!req.user) throw new UnauthorizedError();
+
   await authService.logoutAllDevices(req.user.sub);
+  clearAuthCookies(res);
+
   res.status(HttpStatus.OK).json({
     ...ApiResponseBuilder.success({ message: "Logged out from all devices" }),
     requestId: req.id,
@@ -90,14 +164,47 @@ export async function me(req: Request, res: Response): Promise<void> {
 }
 
 // ============================================================================
-// POST /change-password - protected
+// POST /change-password - revokes all sessions + clears cookie
 // ============================================================================
 export async function changePassword(req: Request, res: Response): Promise<void> {
   if (!req.user) throw new UnauthorizedError();
+
   await authService.changePassword(req.user.sub, req.body as ChangePasswordDto);
+  // All sessions revoked → current cookie is dead → clear it client-side too
+  clearAuthCookies(res);
+
   res.status(HttpStatus.OK).json({
     ...ApiResponseBuilder.success({
       message: "Password changed successfully, all sessions revoked",
+    }),
+    requestId: req.id,
+  });
+}
+
+// ============================================================================
+// POST /forgot-password
+// ============================================================================
+export async function forgotPassword(req: Request, res: Response): Promise<void> {
+  await authService.forgotPassword(req.body as ForgotPasswordDto);
+  res.status(HttpStatus.OK).json({
+    ...ApiResponseBuilder.success({
+      message: "If an account exists, a password reset link has been sent.",
+    }),
+    requestId: req.id,
+  });
+}
+
+// ============================================================================
+// POST /reset-password - clears any stale cookie
+// ============================================================================
+export async function resetPassword(req: Request, res: Response): Promise<void> {
+  await authService.resetPassword(req.body as ResetPasswordDto);
+  // Reset revokes all sessions → any stale cookie is dead → clear
+  clearAuthCookies(res);
+
+  res.status(HttpStatus.OK).json({
+    ...ApiResponseBuilder.success({
+      message: "Password reset successful. Please log in with your new password.",
     }),
     requestId: req.id,
   });

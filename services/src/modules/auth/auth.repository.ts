@@ -1,25 +1,19 @@
 // ============================================================================
-// auth.repository.ts - Data access layer (function-based Repository)
+// auth.repository.ts - Data access layer
 // ============================================================================
-// Repository pattern - SOLID's Single Responsibility
-//   Repository = DB queries only
-//   Service    = business logic
-//   Controller = HTTP concerns
+// Repository = DB queries only
+// Service    = business logic
+// Controller = HTTP concerns
 //
-// Industry convention (Express ecosystem): named function exports
-// Stateless functions - DB client se direct interaction
-// Class wrapping unnecessary - prisma already singleton
-//
-// Why repo separate?
-//   - Service tests me prisma mock karna easy
-//   - Future me DB switch (Postgres → MongoDB) to sirf repo badle
+// Industry convention (Express): named function exports - stateless
+// Prisma already singleton, no class wrapping needed
 // ============================================================================
 
 import { prisma } from "../../db/prisma.js";
-import type { UserRole } from "@prisma/client";
+import type { UserRole } from "../../generated/prisma/client.js";
 
 // ============================================================================
-// Find user by email (login flow - full object with password hash)
+// Find user by email (login flow - includes password hash)
 // ============================================================================
 export async function findUserByEmail(email: string) {
   return prisma.user.findUnique({
@@ -43,7 +37,16 @@ export async function findUserByIdSafe(id: string) {
       image: true,
       emailVerified: true,
       phoneVerified: true,
+      lastLoginAt: true,
       createdAt: true,
+      vendorProfile: {
+        select: {
+          shopName: true,
+          shopSlug: true,
+          status: true,
+          verifiedAt: true,
+        },
+      },
     },
   });
 }
@@ -64,15 +67,12 @@ export async function findUserByIdForAuth(id: string) {
 export async function findUserByIdWithPassword(id: string) {
   return prisma.user.findUnique({
     where: { id },
-    select: { id: true, email: true, password: true },
+    select: { id: true, email: true, name: true, password: true },
   });
 }
 
 // ============================================================================
 // Check email exists - register pre-check
-// ============================================================================
-// findUnique with select id - sirf existence check, full row fetch nahi
-// Performance: minimal data transfer
 // ============================================================================
 export async function emailExists(email: string): Promise<boolean> {
   const user = await prisma.user.findUnique({
@@ -83,20 +83,28 @@ export async function emailExists(email: string): Promise<boolean> {
 }
 
 // ============================================================================
-// Create user - with optional vendor profile (transaction)
+// Create user - with role-specific profile (transactional)
 // ============================================================================
-// Atomic: agar vendor profile create fail ho to user bhi rollback
-// Prisma $transaction - ACID guarantees
+// CUSTOMER → CustomerProfile (default opt-ins)
+// VENDOR   → VendorProfile (PENDING_REVIEW status)
 // ============================================================================
 export async function createUser(data: {
   email: string;
   password: string;
   name: string;
   role: UserRole;
+  shopName?: string; // VENDOR only
 }) {
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
-      data,
+      data: {
+        email: data.email,
+        password: data.password,
+        name: data.name,
+        role: data.role,
+        // New user → PENDING_VERIFICATION until email verified
+        status: "PENDING_VERIFICATION",
+      },
       select: {
         id: true,
         email: true,
@@ -107,19 +115,40 @@ export async function createUser(data: {
       },
     });
 
-    // Vendor profile auto-create with default values
-    // isVerified false - admin manual approve karega
-    if (user.role === "VENDOR") {
+    if (data.role === "CUSTOMER") {
+      await tx.customerProfile.create({
+        data: { userId: user.id },
+      });
+    }
+
+    if (data.role === "VENDOR") {
+      const shopName = data.shopName ?? `${data.name}'s Shop`;
       await tx.vendorProfile.create({
         data: {
           userId: user.id,
-          shopName: `${user.name ?? user.email}'s Shop`,
-          shopSlug: `shop-${user.id.slice(-8)}`,
+          shopName,
+          shopSlug: slugify(`${shopName}-${user.id.slice(-6)}`),
+          status: "PENDING_REVIEW",
         },
       });
     }
 
     return user;
+  });
+}
+
+// ============================================================================
+// Mark email verified - OTP/link verify flow
+// ============================================================================
+export async function markEmailVerified(userId: string) {
+  return prisma.user.update({
+    where: { id: userId },
+    data: {
+      emailVerified: new Date(),
+      // PENDING → ACTIVE jab email verify ho
+      status: "ACTIVE",
+    },
+    select: { id: true, status: true },
   });
 }
 
@@ -135,7 +164,21 @@ export async function updateUserPassword(id: string, passwordHash: string) {
 }
 
 // ============================================================================
-// Soft delete - data preserve compliance ke liye
+// Update last login - audit trail
+// ============================================================================
+export async function updateLastLogin(id: string, ip: string | null) {
+  return prisma.user.update({
+    where: { id },
+    data: {
+      lastLoginAt: new Date(),
+      lastLoginIp: ip,
+    },
+    select: { id: true },
+  });
+}
+
+// ============================================================================
+// Soft delete
 // ============================================================================
 export async function softDeleteUser(id: string) {
   return prisma.user.update({
@@ -143,4 +186,15 @@ export async function softDeleteUser(id: string) {
     data: { status: "DELETED", deletedAt: new Date() },
     select: { id: true },
   });
+}
+
+// ============================================================================
+// Helper: URL-safe slug
+// ============================================================================
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
 }

@@ -106,9 +106,10 @@ export async function createSession(user: {
   const refreshToken = signRefresh(payload);
 
   // Redis pe refresh token store - revocation ke liye
+  // ioredis API: redis.set(key, value, "EX", ttl) - SET with EXpiry seconds
   const ttl = parseExpiryToSeconds(env.JWT_REFRESH_EXPIRES_IN);
   await Promise.all([
-    redis.set(RedisKeys.session(user.id, sid), refreshToken, { ex: ttl }),
+    redis.set(RedisKeys.session(user.id, sid), refreshToken, "EX", ttl),
     redis.sadd(RedisKeys.userSessions(user.id), sid),
     redis.expire(RedisKeys.userSessions(user.id), ttl),
   ]);
@@ -125,7 +126,8 @@ export async function isSessionValid(
   sid: string,
   refreshToken: string,
 ): Promise<boolean> {
-  const stored = await redis.get<string>(RedisKeys.session(userId, sid));
+  // ioredis get returns string | null (no generic type param like Upstash)
+  const stored = await redis.get(RedisKeys.session(userId, sid));
   return stored === refreshToken;
 }
 

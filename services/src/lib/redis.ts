@@ -1,86 +1,127 @@
 // ============================================================================
-// redis.ts - Upstash Redis singleton + rate limiter factory
+// redis.ts - ioredis singleton (Production-grade TCP client)
 // ============================================================================
-// Upstash = serverless Redis over HTTP/REST
-// - Works in Vercel/Lambda (no persistent TCP)
-// - Pay per request - idle me cost nahi
-// - Local dev: hiett/serverless-redis-http container
+// Why ioredis over @upstash/redis (REST)?
+//   - Persistent TCP connection (sub-ms latency vs ~50ms HTTP roundtrip)
+//   - Pipelining + transactions (MULTI/EXEC)
+//   - Pub/Sub support (for WebSocket fan-out later)
+//   - Streams support (Kafka-lite use cases)
+//   - 5-10x faster per operation for long-running servers
+//
+// Industry: Amazon (ElastiCache), Flipkart, Stripe, Discord - all use TCP Redis
+// Upstash provides BOTH endpoints - we use the rediss:// (TCP) one
+//
+// Upstash dashboard → "Connect" tab → ioredis → copy connection string
+// Local dev: docker-compose redis container at redis://localhost:6379
 // ============================================================================
 
-import { Redis } from "@upstash/redis";
-import { Ratelimit } from "@upstash/ratelimit";
-import { env } from "../config/env.js";
+// Named import - default import ioredis ke saath NodeNext/ESM me
+// "not constructable" error deta hai. Named { Redis } reliably works.
+import { Redis } from "ioredis";
+type RedisInstance = Redis;
+import { env, isProd } from "../config/env.js";
+import { logger } from "../utils/logger.js";
 
 // ============================================================================
-// Singleton Redis client
+// Singleton factory
 // ============================================================================
-class RedisClient {
-  private static instance: Redis | null = null;
+function createRedisClient(): RedisInstance {
+  const client = new Redis(env.REDIS_URL, {
+    // Lazy connect - connection only when first command issued
+    // (avoids startup connect-storm with multiple instances)
+    lazyConnect: false,
 
-  static getInstance(): Redis {
-    if (!this.instance) {
-      this.instance = new Redis({
-        url: env.UPSTASH_REDIS_REST_URL,
-        token: env.UPSTASH_REDIS_REST_TOKEN,
-        // Auto-retry on transient network errors
-        retry: {
-          retries: 3,
-          backoff: (retryCount) => Math.min(1000 * 2 ** retryCount, 5000),
-        },
-      });
-    }
-    return this.instance;
-  }
+    // Reconnect strategy - exponential backoff with cap
+    // Cloud Redis transient disconnects normal hai - resilience zaruri
+    retryStrategy(times: number) {
+      const delay = Math.min(times * 200, 5000);
+      return delay;
+    },
+
+    // READONLY/MOVED errors auto-handle (cluster scenarios)
+    reconnectOnError(err: Error) {
+      const target = "READONLY";
+      return err.message.includes(target);
+    },
+
+    // Connection pool - ioredis single conn by default, sufficient for most apps
+    // High-throughput (>10k RPS) → use BullMQ-style multi-conn or cluster
+    maxRetriesPerRequest: 3,
+
+    // Production: TLS verify strict, Dev: allow self-signed
+    tls: env.REDIS_URL.startsWith("rediss://") ? { rejectUnauthorized: isProd } : undefined,
+
+    // Command timeout - hang prevent
+    commandTimeout: 5000,
+
+    // Connection name - Redis CLIENT LIST me visible (debugging)
+    connectionName: `ecommerce-api-${process.pid}`,
+  });
+
+  // Event hooks - observability
+  // Explicit types required (noImplicitAny strict mode)
+  client.on("connect", () => logger.info("Redis: connecting"));
+  client.on("ready", () => logger.info("Redis: ready"));
+  client.on("error", (err: Error) => logger.error({ err }, "Redis: error"));
+  client.on("close", () => logger.warn("Redis: connection closed"));
+  client.on("reconnecting", (delay: number) => logger.warn({ delay }, "Redis: reconnecting"));
+  client.on("end", () => logger.warn("Redis: connection ended"));
+
+  return client;
 }
 
-export const redis = RedisClient.getInstance();
+// Module-level singleton - process me ek hi instance
+export const redis: RedisInstance = createRedisClient();
 
 // ============================================================================
-// Key namespacing - global Redis se collision avoid
+// Key namespacing - global Redis collision avoid
 // ============================================================================
-// jab multiple apps same Redis share kare to prefix se separation
-// Production me: `prod:ecommerce:session:...`
-// Dev: `dev:ecommerce:session:...`
+// Multi-tenant ya multi-env me ek hi Redis share ho to prefix se separation
+// jaise: `prod:ecom:session:...` vs `dev:ecom:session:...`
+const PREFIX = isProd ? "prod" : env.NODE_ENV;
+
 export const RedisKeys = {
   // Auth
-  session: (userId: string, sid: string) => `session:${userId}:${sid}`,
-  userSessions: (userId: string) => `user:sessions:${userId}`,
-  passwordResetToken: (token: string) => `pwd-reset:${token}`,
-  emailVerifyToken: (token: string) => `email-verify:${token}`,
-  // OTP
-  otp: (phone: string) => `otp:${phone}`,
-  otpAttempts: (phone: string) => `otp-attempts:${phone}`,
-  // Rate limit (Upstash @upstash/ratelimit khud manage karta hai)
-  // Generic cache
-  cache: (key: string) => `cache:${key}`,
+  session: (userId: string, sid: string) => `${PREFIX}:session:${userId}:${sid}`,
+  userSessions: (userId: string) => `${PREFIX}:user:sessions:${userId}`,
+  passwordResetToken: (token: string) => `${PREFIX}:pwd-reset:${token}`,
+  emailVerifyToken: (token: string) => `${PREFIX}:email-verify:${token}`,
+
+  // OTP - request side (send/resend)
+  otp: (key: string) => `${PREFIX}:otp:${key}`,
+  otpCooldown: (key: string) => `${PREFIX}:otp:cooldown:${key}`,
+  otpRequests: (key: string) => `${PREFIX}:otp:requests:${key}`,
+  otpSpamLock: (key: string) => `${PREFIX}:otp:spam-lock:${key}`,
+  // OTP - verify side (wrong-attempt tracking)
+  otpAttempts: (key: string) => `${PREFIX}:otp:attempts:${key}`,
+  otpVerifyLock: (key: string) => `${PREFIX}:otp:verify-lock:${key}`,
+
+  // Cache
+  cache: (key: string) => `${PREFIX}:cache:${key}`,
 } as const;
 
 // ============================================================================
-// Rate limiter factory - per route different limits ban sakte hai
+// Graceful shutdown
 // ============================================================================
-// Sliding window algorithm - burst se better, smooth distribution
-// Analytics on: Upstash dashboard pe usage dikhega
-export function createRateLimiter(opts: {
-  requests: number;
-  window: `${number} ${"s" | "m" | "h" | "d"}`;
-  prefix: string;
-}): Ratelimit {
-  return new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(opts.requests, opts.window),
-    analytics: true,
-    prefix: opts.prefix,
-  });
+export async function disconnectRedis(): Promise<void> {
+  await redis.quit();
+  logger.info("Redis: disconnected gracefully");
 }
 
-// Pre-configured limiters - common use cases
-export const RateLimiters = {
-  // Global - har IP/user ke liye baseline
-  global: createRateLimiter({ requests: 100, window: "1 m", prefix: "rl:global" }),
-  // Auth (login/register) - brute force prevent
-  auth: createRateLimiter({ requests: 10, window: "15 m", prefix: "rl:auth" }),
-  // OTP send - SMS cost expensive
-  otp: createRateLimiter({ requests: 3, window: "1 h", prefix: "rl:otp" }),
-  // Password reset - email spam prevent
-  passwordReset: createRateLimiter({ requests: 3, window: "1 h", prefix: "rl:pwd-reset" }),
-};
+// ============================================================================
+// Health check - ping with timeout
+// ============================================================================
+export async function pingRedis(timeoutMs = 2000): Promise<boolean> {
+  try {
+    const result = await Promise.race([
+      redis.ping(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Redis ping timeout")), timeoutMs),
+      ),
+    ]);
+    return result === "PONG";
+  } catch (err) {
+    logger.error({ err }, "Redis health check failed");
+    return false;
+  }
+}

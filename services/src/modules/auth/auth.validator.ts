@@ -37,15 +37,70 @@ export const userRoleSchema = z
 // ============================================================================
 // Register schema
 // ============================================================================
+// Discriminated union NOT used - keeps API simple
+// VENDOR requires shopName; CUSTOMER ignores it
+// Service layer validates that VENDOR provides shopName
+// ============================================================================
 export const registerSchema = z
   .object({
     email: z.string().email().toLowerCase().trim().openapi({ example: "user@example.com" }),
     password: passwordSchema,
     name: z.string().min(2).max(100).trim().openapi({ example: "John Doe" }),
-    // Vendor signup publicly allowed - admin verifies before selling
+    // Public signup: CUSTOMER or VENDOR. ADMIN only via admin-create endpoint
     role: z.enum(["CUSTOMER", "VENDOR"]).optional().default("CUSTOMER"),
+    // VENDOR only - shop name (slug auto-generated)
+    shopName: z.string().min(2).max(100).trim().optional().openapi({
+      example: "Awesome Goods Store",
+      description: "Required for VENDOR role",
+    }),
   })
+  .refine(
+    (data) => data.role !== "VENDOR" || (data.shopName && data.shopName.length >= 2),
+    { message: "shopName is required for VENDOR role", path: ["shopName"] },
+  )
   .openapi("RegisterRequest");
+
+// ============================================================================
+// Verify OTP schema (registration / login OTP / etc.)
+// ============================================================================
+export const verifyOtpSchema = z
+  .object({
+    email: z.string().email().toLowerCase().trim(),
+    otp: z
+      .string()
+      .length(6, "OTP must be 6 digits")
+      .regex(/^\d+$/, "OTP must be numeric")
+      .openapi({ example: "123456" }),
+  })
+  .openapi("VerifyOtpRequest");
+
+// ============================================================================
+// Resend OTP schema
+// ============================================================================
+export const resendOtpSchema = z
+  .object({
+    email: z.string().email().toLowerCase().trim(),
+  })
+  .openapi("ResendOtpRequest");
+
+// ============================================================================
+// Forgot password schema
+// ============================================================================
+export const forgotPasswordSchema = z
+  .object({
+    email: z.string().email().toLowerCase().trim(),
+  })
+  .openapi("ForgotPasswordRequest");
+
+// ============================================================================
+// Reset password schema
+// ============================================================================
+export const resetPasswordSchema = z
+  .object({
+    token: z.string().min(1),
+    newPassword: passwordSchema,
+  })
+  .openapi("ResetPasswordRequest");
 
 // ============================================================================
 // Login schema
@@ -63,9 +118,12 @@ export const loginSchema = z
 // ============================================================================
 // Refresh schema
 // ============================================================================
+// refreshToken optional in BODY - web clients send via httpOnly cookie
+// Native/mobile clients send via body (no cookie jar)
+// Controller checks both sources via getRefreshTokenFromRequest()
 export const refreshSchema = z
   .object({
-    refreshToken: z.string().min(1, "Refresh token is required"),
+    refreshToken: z.string().min(1).optional(),
   })
   .openapi("RefreshRequest");
 
@@ -107,6 +165,10 @@ export type RegisterDto = z.infer<typeof registerSchema>;
 export type LoginDto = z.infer<typeof loginSchema>;
 export type RefreshDto = z.infer<typeof refreshSchema>;
 export type ChangePasswordDto = z.infer<typeof changePasswordSchema>;
+export type VerifyOtpDto = z.infer<typeof verifyOtpSchema>;
+export type ResendOtpDto = z.infer<typeof resendOtpSchema>;
+export type ForgotPasswordDto = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordDto = z.infer<typeof resetPasswordSchema>;
 export type JwtPayload = z.infer<typeof jwtPayloadSchema>;
 export type UserRoleType = z.infer<typeof userRoleSchema>;
 
