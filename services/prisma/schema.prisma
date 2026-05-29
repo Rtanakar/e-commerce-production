@@ -56,14 +56,19 @@ enum VendorStatus {
 model User {
   id            String     @id @default(cuid())
   email         String     @unique
-  password      String
+  // Password nullable - OAuth users have no password (Google/GitHub login only)
+  password      String?
   name          String
   phone         String?    @unique
   emailVerified DateTime?
   phoneVerified DateTime?
-  image         String? // avatar URL (Cloudinary/ImageKit)
+  image         String? // avatar URL (Cloudinary/ImageKit/Google profile pic)
   role          UserRole   @default(CUSTOMER)
   status        UserStatus @default(PENDING_VERIFICATION)
+
+  // OAuth - links to Google/GitHub/etc identities
+  // Industry: keep User canonical, link providers via OAuthAccount
+  oauthAccounts OAuthAccount[]
 
   // Last login tracking - security audit trail
   lastLoginAt DateTime?
@@ -84,6 +89,36 @@ model User {
   @@index([status, role])
   @@index([role])
   @@map("users")
+}
+
+// ============================================================================
+// OAUTH ACCOUNT - linked third-party identities
+// ============================================================================
+// One User can have multiple OAuth providers (Google + GitHub + ...).
+// Industry pattern (Auth0/Clerk/NextAuth): separate table, never store
+// access tokens long-term (Google's token rotates).
+//
+// providerAccountId = Google's `sub` / GitHub's user id (immutable per provider)
+// ============================================================================
+model OAuthAccount {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  provider          String   // "google" | "github" | "apple" etc.
+  providerAccountId String   // Google's `sub` claim - immutable
+
+  // Optional cached profile data (avoids extra API call on login)
+  email             String?
+  name              String?
+  image             String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, providerAccountId]) // one identity per provider
+  @@index([userId])
+  @@map("oauth_accounts")
 }
 
 // ============================================================================

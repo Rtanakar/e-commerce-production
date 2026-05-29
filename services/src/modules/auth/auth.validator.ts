@@ -95,9 +95,13 @@ export const forgotPasswordSchema = z
 // ============================================================================
 // Reset password schema
 // ============================================================================
+// OTP-based password reset (Amazon/Flipkart pattern):
+// email + otp + newPassword sent together. Server verifies OTP and resets atomically.
+// Industry: cleaner mobile UX (no email-click required), works in WebView/Native apps.
 export const resetPasswordSchema = z
   .object({
-    token: z.string().min(1),
+    email: z.string().email().toLowerCase().trim(),
+    otp: z.string().length(6).regex(/^\d+$/, "OTP must be 6 digits"),
     newPassword: passwordSchema,
   })
   .openapi("ResetPasswordRequest");
@@ -152,6 +156,8 @@ export const jwtPayloadSchema = z.object({
   email: z.string().email(),
   role: userRoleSchema,
   sid: z.string(),
+  // jti - access-token-only, used for blacklist revocation (tokens.ts attaches it)
+  jti: z.string().optional(),
   iat: z.number().optional(),
   exp: z.number().optional(),
   iss: z.string().optional(),

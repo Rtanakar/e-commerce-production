@@ -81,9 +81,19 @@ export const redis: RedisInstance = createRedisClient();
 const PREFIX = isProd ? "prod" : env.NODE_ENV;
 
 export const RedisKeys = {
-  // Auth
+  // ===== Auth - sessions =====
+  // session: refresh-token HASH + binding metadata (Redis HASH)
+  //   fields → tokenHash, fingerprint, ip, ua, createdAt, lastUsedAt, rotations
   session: (userId: string, sid: string) => `${PREFIX}:session:${userId}:${sid}`,
+  // userSessions: SET of sid's per user (logout-all)
   userSessions: (userId: string) => `${PREFIX}:user:sessions:${userId}`,
+  // accessJtiRevoked: revoked access-token JTI's (logout/password-change)
+  //   TTL == remaining lifetime of token; absence means token still valid
+  accessJtiRevoked: (jti: string) => `${PREFIX}:jti:revoked:${jti}`,
+  // refreshFamily: reuse-detection family marker - parent sid history per user
+  refreshFamilyUsed: (userId: string, oldSid: string) =>
+    `${PREFIX}:rt:used:${userId}:${oldSid}`,
+
   passwordResetToken: (token: string) => `${PREFIX}:pwd-reset:${token}`,
   emailVerifyToken: (token: string) => `${PREFIX}:email-verify:${token}`,
 
@@ -95,6 +105,9 @@ export const RedisKeys = {
   // OTP - verify side (wrong-attempt tracking)
   otpAttempts: (key: string) => `${PREFIX}:otp:attempts:${key}`,
   otpVerifyLock: (key: string) => `${PREFIX}:otp:verify-lock:${key}`,
+
+  // OAuth - CSRF state token (5min TTL)
+  oauthState: (state: string) => `${PREFIX}:oauth:state:${state}`,
 
   // Cache
   cache: (key: string) => `${PREFIX}:cache:${key}`,

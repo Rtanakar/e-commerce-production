@@ -45,8 +45,20 @@ const EnvSchema = z.object({
   // ===== JWT =====
   JWT_ACCESS_SECRET: z.string().min(32, "JWT_ACCESS_SECRET must be at least 32 chars"),
   JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET must be at least 32 chars"),
-  JWT_ACCESS_EXPIRES_IN: z.string().default("15m"),
-  JWT_REFRESH_EXPIRES_IN: z.string().default("30d"),
+  // Format: <number><unit>  unit ∈ {s, m, h, d, w}
+  // FAANG default: access 15m + refresh 7d (industry standard - was 30d, but
+  // OWASP recommends shorter lived refresh tokens to limit replay window)
+  // Access 5h - longer than typical (15m) per user preference. Trade-off:
+  // less refresh churn, larger window if token leaks. Mitigated by JTI
+  // revocation (logout/password-change instantly kills access token).
+  JWT_ACCESS_EXPIRES_IN: z
+    .string()
+    .regex(/^\d+[smhdw]$/, "format like 5h / 15m / 7d")
+    .default("5h"),
+  JWT_REFRESH_EXPIRES_IN: z
+    .string()
+    .regex(/^\d+[smhdw]$/, "format like 7d / 1w")
+    .default("7d"),
 
   // ===== BCRYPT =====
   BCRYPT_SALT_ROUNDS: z
@@ -62,6 +74,37 @@ const EnvSchema = z.object({
   // Cookie domain - set for subdomain sharing (.shop.com → admin.shop.com, www.shop.com)
   // Leave empty for localhost / single-domain apps
   COOKIE_DOMAIN: z.string().optional(),
+  // sameSite override - "lax" | "strict" | "none"
+  //   lax    → same-site cross-origin OK (different ports/subdomains) - default
+  //   strict → never sent on cross-site (best CSRF protection, breaks SSO/OAuth)
+  //   none   → cross-site allowed (REQUIRED if frontend + api on different domains)
+  // Leave empty: auto pick (dev = lax, prod = lax if COOKIE_DOMAIN set, else none)
+  COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).optional(),
+  // Chrome CHIPS (Cookies Having Independent Partitioned State) - 3rd-party
+  // cookie partitioning. Set true if your cookie is loaded from another site
+  // in an iframe / 3rd-party context. Modern browsers will require this 2024+
+  COOKIE_PARTITIONED: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
+
+  // ===== CSRF =====
+  // Double-submit cookie pattern - no server-side secret needed.
+  // We still keep a key here for HMAC-binding the CSRF token to the session
+  // (rotation possible without invalidating live sessions)
+  CSRF_SECRET: z
+    .string()
+    .min(32, "CSRF_SECRET must be at least 32 chars")
+    .default("dev_csrf_change_to_32_char_random_string____________"),
+
+  // ===== AUTH POLICY =====
+  // Strict device binding - on refresh, fingerprint mismatch revokes session.
+  // Mobile users frequently change networks/UA - default OFF (warn-only mode).
+  // Enable for high-value tenants (admin panel / payments).
+  AUTH_STRICT_DEVICE_BINDING: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
 
   // ===== RATE LIMIT =====
   RATE_LIMIT_WINDOW_MS: z
@@ -94,6 +137,15 @@ const EnvSchema = z.object({
   SMTP_PASSWORD: z.string().optional(),
   EMAIL_FROM: z.string().default("E-Commerce <no-reply@shop.local>"),
   EMAIL_FROM_NAME: z.string().default("E-Commerce"),
+
+  // ===== GOOGLE OAUTH =====
+  // Get credentials: https://console.cloud.google.com/apis/credentials
+  // Create OAuth 2.0 Client ID (Web application)
+  // Authorized redirect URI: http://localhost:8080/api/v1/auth/google/callback
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  // Where to redirect after successful OAuth (frontend route)
+  GOOGLE_OAUTH_REDIRECT_BASE: z.string().url().default("http://localhost:3000"),
 
   // ===== OBSERVABILITY =====
   SENTRY_DSN: z.string().optional(),

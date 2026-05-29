@@ -9,12 +9,14 @@ import { Router } from "express";
 import { asyncHandler } from "../../middlewares/async-handler.js";
 import { validate } from "../../middlewares/validate.js";
 import { requireAuth } from "../../middlewares/require-auth.js";
+import { requireCsrf } from "../../middlewares/csrf.js";
 import {
   authRateLimit,
   otpRateLimit,
   passwordResetRateLimit,
 } from "../../middlewares/rate-limit.js";
 import * as authController from "./auth.controller.js";
+import * as googleOAuth from "./oauth/google.controller.js";
 import {
   registerSchema,
   loginSchema,
@@ -95,7 +97,14 @@ router.post("/login", authRateLimit, validate(loginSchema), asyncHandler(authCon
  * @body { refresh_token }
  * @returns 200 OK with new authentication tokens
  */
-router.post("/refresh", validate(refreshSchema), asyncHandler(authController.refresh));
+// CSRF enforced - if request has auth cookie, must echo X-CSRF-Token header
+// (cookie-less mobile/native clients via body refreshToken bypass automatically)
+router.post(
+  "/refresh",
+  requireCsrf,
+  validate(refreshSchema),
+  asyncHandler(authController.refresh),
+);
 
 // Forgot password - very strict limit (email spam)
 /**
@@ -128,6 +137,15 @@ router.post(
 );
 
 // ============================================================================
+// OAUTH - Google
+// ============================================================================
+// GET /api/v1/auth/google         - redirect to Google consent
+// GET /api/v1/auth/google/callback - Google posts back, we issue tokens
+// ============================================================================
+router.get("/google", asyncHandler(googleOAuth.initiateGoogleAuth));
+router.get("/google/callback", asyncHandler(googleOAuth.googleCallback));
+
+// ============================================================================
 // PROTECTED - requireAuth
 // ============================================================================
 
@@ -136,14 +154,14 @@ router.post(
  * @desc Logout the current user
  * @access Protected
  */
-router.post("/logout", requireAuth, asyncHandler(authController.logout));
+router.post("/logout", requireCsrf, requireAuth, asyncHandler(authController.logout));
 
 /**
  * @route POST /api/v1/auth/logout-all
  * @desc Logout the user from all devices (invalidate all tokens)
  * @access Protected
  */
-router.post("/logout-all", requireAuth, asyncHandler(authController.logoutAll));
+router.post("/logout-all", requireCsrf, requireAuth, asyncHandler(authController.logoutAll));
 
 /**
  * @route GET /api/v1/auth/me
@@ -160,6 +178,7 @@ router.get("/me", requireAuth, asyncHandler(authController.me));
  */
 router.post(
   "/change-password",
+  requireCsrf,
   requireAuth,
   validate(changePasswordSchema),
   asyncHandler(authController.changePassword),

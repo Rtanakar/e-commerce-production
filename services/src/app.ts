@@ -135,7 +135,9 @@ app.use(
     origin: corsOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    exposedHeaders: ["X-Request-Id", "X-Response-Time"],
+    // X-CSRF-Token exposed so frontend can read it from fetch() responses
+    // (browsers hide non-CORS-safelisted headers by default)
+    exposedHeaders: ["X-Request-Id", "X-Response-Time", "X-CSRF-Token"],
     maxAge: 86400,
   }),
 );

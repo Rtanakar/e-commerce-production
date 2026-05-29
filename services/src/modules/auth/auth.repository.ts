@@ -178,6 +178,93 @@ export async function updateLastLogin(id: string, ip: string | null) {
 }
 
 // ============================================================================
+// OAuth: find user by provider + providerAccountId
+// ============================================================================
+// Lookup via OAuthAccount table - one provider account = one user.
+// Returns null if not linked.
+// ============================================================================
+export async function findUserByOAuth(
+  provider: string,
+  providerAccountId: string,
+) {
+  const account = await prisma.oAuthAccount.findUnique({
+    where: {
+      provider_providerAccountId: { provider, providerAccountId },
+    },
+    include: {
+      user: {
+        select: { id: true, email: true, name: true, role: true, status: true },
+      },
+    },
+  });
+  return account?.user ?? null;
+}
+
+// ============================================================================
+// OAuth: link existing user to provider (for account merging)
+// ============================================================================
+export async function linkOAuthAccount(input: {
+  userId: string;
+  provider: string;
+  providerAccountId: string;
+  email?: string;
+  name?: string;
+  image?: string;
+}) {
+  return prisma.oAuthAccount.create({
+    data: input,
+  });
+}
+
+// ============================================================================
+// OAuth: create new user from OAuth profile (auto-verified email)
+// ============================================================================
+// Google has already verified the email - we trust it and skip OTP step.
+// Industry: all OAuth providers do this (Google/GitHub vetted emails).
+// ============================================================================
+export async function createUserFromOAuth(input: {
+  email: string;
+  name: string;
+  image?: string;
+  provider: string;
+  providerAccountId: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: {
+        email: input.email,
+        name: input.name,
+        image: input.image,
+        // OAuth users have no password (signin via provider only)
+        password: null,
+        // Email verified by Google - skip PENDING_VERIFICATION
+        emailVerified: new Date(),
+        status: "ACTIVE",
+        role: "CUSTOMER",
+      },
+      select: { id: true, email: true, name: true, role: true, status: true },
+    });
+
+    // Link the OAuth identity
+    await tx.oAuthAccount.create({
+      data: {
+        userId: user.id,
+        provider: input.provider,
+        providerAccountId: input.providerAccountId,
+        email: input.email,
+        name: input.name,
+        image: input.image,
+      },
+    });
+
+    // Auto-create customer profile
+    await tx.customerProfile.create({ data: { userId: user.id } });
+
+    return user;
+  });
+}
+
+// ============================================================================
 // Soft delete
 // ============================================================================
 export async function softDeleteUser(id: string) {

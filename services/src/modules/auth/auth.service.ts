@@ -21,7 +21,6 @@ import {
   InvalidCredentialsError,
   AccountSuspendedError,
   NotFoundError,
-  SessionRevokedError,
   UnauthorizedError,
   BadRequestError,
 } from "../../utils/errors.js";
@@ -103,9 +102,19 @@ export async function register(input: RegisterDto): Promise<{ email: string; otp
 }
 
 // ============================================================================
-// VERIFY OTP - issues tokens
+// VERIFY OTP - marks email verified ONLY (no auto sign-in)
 // ============================================================================
-export async function verifyOtp(input: VerifyOtpDto): Promise<AuthResponseDto> {
+// Flow: signup → verify-otp → /signin (user logs in manually)
+//
+// Why NO tokens here?
+//   - Cleaner separation: "verify identity" vs "create session"
+//   - Industry: banks/traditional e-commerce use this (Amazon, Flipkart)
+//   - User has to enter password ONCE to confirm credentials work
+//   - Single source of truth for session = /login endpoint
+// ============================================================================
+export async function verifyOtp(
+  input: VerifyOtpDto,
+): Promise<{ email: string; verified: boolean; message: string }> {
   assertRequired(input, ["email", "otp"]);
 
   await authHelper.verifyOtp(input.email, input.otp);
@@ -113,11 +122,11 @@ export async function verifyOtp(input: VerifyOtpDto): Promise<AuthResponseDto> {
   const user = await authRepo.findUserByEmail(input.email);
   if (!user) throw new NotFoundError("User");
 
-  // First verify of registration → activate account + send welcome email
+  // First verification → activate account + send welcome email
   if (!user.emailVerified) {
     await authRepo.markEmailVerified(user.id);
 
-    // Welcome email - fire-and-forget (non-critical)
+    // Welcome email - fire-and-forget (non-critical, don't fail verify)
     void (async () => {
       try {
         const { subject, html } = await welcomeEmail({
@@ -131,15 +140,12 @@ export async function verifyOtp(input: VerifyOtpDto): Promise<AuthResponseDto> {
     })();
   }
 
-  const { accessToken, refreshToken } = await tokens.createSession({
-    id: user.id,
-    email: user.email,
-    role: user.role,
-  });
+  logger.info({ userId: user.id }, "Email verified - redirect to /signin");
 
   return {
-    user: { id: user.id, email: user.email, name: user.name, role: user.role },
-    tokens: { accessToken, refreshToken },
+    email: user.email,
+    verified: true,
+    message: "Email verified successfully. Please sign in to continue.",
   };
 }
 
@@ -168,8 +174,8 @@ export async function resendOtp(input: ResendOtpDto): Promise<{ otpSent: boolean
 // ============================================================================
 export async function login(
   input: LoginDto,
-  context: { ip: string | null },
-): Promise<AuthResponseDto> {
+  context: { ip: string | null; ua?: string | null; fingerprint?: string },
+): Promise<AuthResponseDto & { sid: string }> {
   assertRequired(input, ["email", "password"]);
 
   const user = await authRepo.findUserByEmail(input.email);
@@ -192,49 +198,58 @@ export async function login(
   // Audit trail - last login tracking
   await authRepo.updateLastLogin(user.id, context.ip);
 
-  const { accessToken, refreshToken } = await tokens.createSession({
-    id: user.id,
-    email: user.email,
-    role: user.role,
-  });
+  const { accessToken, refreshToken, sid } = await tokens.createSession(
+    { id: user.id, email: user.email, role: user.role },
+    { ip: context.ip, ua: context.ua ?? null, fingerprint: context.fingerprint },
+  );
 
-  logger.info({ userId: user.id, ip: context.ip }, "User logged in");
+  logger.info({ userId: user.id, ip: context.ip, sid }, "User logged in");
 
   return {
     user: { id: user.id, email: user.email, name: user.name, role: user.role },
     tokens: { accessToken, refreshToken },
+    sid,
   };
 }
 
 // ============================================================================
 // REFRESH (token rotation - OWASP)
 // ============================================================================
-export async function refreshTokens(refreshToken: string): Promise<AuthResponseDto> {
+export async function refreshTokens(
+  refreshToken: string,
+  context: { ip?: string | null; ua?: string | null; fingerprint?: string } = {},
+): Promise<AuthResponseDto & { sid: string }> {
   if (!refreshToken) {
     throw new BadRequestError("Refresh token is required");
   }
 
   const payload = tokens.verifyRefreshToken(refreshToken);
 
-  const valid = await tokens.isSessionValid(payload.sub, payload.sid, refreshToken);
-  if (!valid) {
-    // OWASP: refresh token reuse → revoke all (theft response)
-    await tokens.handleSuspiciousRefresh(payload.sub);
-    throw new SessionRevokedError();
-  }
+  // validateRefreshSession does: hash compare + replay detect + binding check
+  // Throws SessionRevokedError on any anomaly (and revokes-all on theft signals)
+  await tokens.validateRefreshSession(payload.sub, payload.sid, refreshToken, {
+    fingerprint: context.fingerprint,
+  });
 
   const user = await authRepo.findUserByIdForAuth(payload.sub);
   if (!user) throw new UnauthorizedError("User does not exist");
   if (user.status !== "ACTIVE") throw new AccountSuspendedError();
 
-  const { accessToken, refreshToken: newRefresh } = await tokens.rotateSession(
+  const {
+    accessToken,
+    refreshToken: newRefresh,
+    sid,
+  } = await tokens.rotateSession(
     { id: user.id, email: user.email, role: user.role },
     payload.sid,
+    refreshToken,
+    { fingerprint: context.fingerprint },
   );
 
   return {
     user: { id: user.id, email: user.email, name: user.name, role: user.role },
     tokens: { accessToken, refreshToken: newRefresh },
+    sid,
   };
 }
 
@@ -297,9 +312,10 @@ export async function changePassword(userId: string, input: ChangePasswordDto): 
 }
 
 // ============================================================================
-// FORGOT PASSWORD - send reset email
+// FORGOT PASSWORD - send OTP (mobile-first pattern)
 // ============================================================================
 // SECURITY: no user enumeration - same response whether user exists or not
+// Sends OTP via existing helper (same rate-limit, cooldown, spam-lock logic)
 // ============================================================================
 export async function forgotPassword(input: ForgotPasswordDto): Promise<void> {
   assertRequired(input, ["email"]);
@@ -307,27 +323,47 @@ export async function forgotPassword(input: ForgotPasswordDto): Promise<void> {
   const user = await authRepo.findUserByEmail(input.email);
   if (!user || user.status === "DELETED") return;
 
-  await authHelper.sendPasswordResetEmailHelper({
+  // Reuse OTP helper - same cooldown/spam-lock as login OTP
+  await authHelper.sendOtpEmail({
     name: user.name,
     email: user.email,
-    userId: user.id,
+    purpose: "password-reset",
   });
 }
 
 // ============================================================================
-// RESET PASSWORD - via reset token
+// RESET PASSWORD - via OTP (Amazon/Flipkart pattern)
+// ============================================================================
+// Flow:
+//   1. Verify OTP (consumes it, throws on invalid/locked)
+//   2. Fetch user with current password hash
+//   3. Reject if new password equals current (defense-in-depth)
+//   4. Hash + update + revoke all sessions
 // ============================================================================
 export async function resetPassword(input: ResetPasswordDto): Promise<void> {
-  assertRequired(input, ["token", "newPassword"]);
+  assertRequired(input, ["email", "otp", "newPassword"]);
 
-  const userId = await authHelper.consumePasswordResetToken(input.token);
-  if (!userId) {
-    throw new BadRequestError("Invalid or expired reset token");
+  // Step 1: verify OTP (throws on lock/expired/wrong)
+  await authHelper.verifyOtp(input.email, input.otp);
+
+  // Step 2: fetch user with password hash
+  const user = await authRepo.findUserByEmail(input.email);
+  if (!user || user.status === "DELETED") {
+    throw new BadRequestError("Account not found");
   }
 
-  const newHash = await hashPassword(input.newPassword);
-  await authRepo.updateUserPassword(userId, newHash);
-  await tokens.revokeAllSessions(userId);
+  // Step 3: reject reuse of same password (industry security policy)
+  const sameAsOld = await verifyPassword(input.newPassword, user.password);
+  if (sameAsOld) {
+    throw new BadRequestError(
+      "New password must be different from your current password",
+    );
+  }
 
-  logger.info({ userId }, "Password reset - all sessions revoked");
+  // Step 4: hash + persist + revoke all sessions (force re-login everywhere)
+  const newHash = await hashPassword(input.newPassword);
+  await authRepo.updateUserPassword(user.id, newHash);
+  await tokens.revokeAllSessions(user.id);
+
+  logger.info({ userId: user.id }, "Password reset via OTP - all sessions revoked");
 }

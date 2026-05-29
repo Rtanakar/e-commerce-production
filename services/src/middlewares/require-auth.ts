@@ -15,21 +15,31 @@
 // ============================================================================
 
 import type { Request, Response, NextFunction } from "express";
-import { verifyAccessToken } from "../lib/tokens.js";
-import { UnauthorizedError, ForbiddenError } from "../utils/errors.js";
+import { verifyAccessToken, isAccessJtiRevoked } from "../lib/tokens.js";
+import { UnauthorizedError, ForbiddenError, SessionRevokedError } from "../utils/errors.js";
 import { getAccessTokenFromRequest } from "../utils/cookies.js";
 import type { JwtPayload, UserRoleType } from "../modules/auth/auth.validator.js";
 
 // ============================================================================
 // requireAuth - strict: token required (cookie or header)
 // ============================================================================
-export function requireAuth(req: Request, _res: Response, next: NextFunction): void {
+export async function requireAuth(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
   const token = getAccessTokenFromRequest(req);
   if (!token) {
     return next(new UnauthorizedError("Authorization token required"));
   }
   try {
-    req.user = verifyAccessToken(token);
+    const payload = verifyAccessToken(token);
+    // Revocation check - logout / password-change / theft response
+    // adds jti to Redis blacklist. O(1) lookup, ~1ms overhead.
+    if (await isAccessJtiRevoked(payload.jti)) {
+      return next(new SessionRevokedError("Session was revoked"));
+    }
+    req.user = payload;
     next();
   } catch (err) {
     next(err);
@@ -41,11 +51,18 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
 // ============================================================================
 // Public routes with personalized content - feed, homepage etc.
 // ============================================================================
-export function optionalAuth(req: Request, _res: Response, next: NextFunction): void {
+export async function optionalAuth(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
   const token = getAccessTokenFromRequest(req);
   if (!token) return next();
   try {
-    req.user = verifyAccessToken(token);
+    const payload = verifyAccessToken(token);
+    if (!(await isAccessJtiRevoked(payload.jti))) {
+      req.user = payload;
+    }
   } catch {
     // Invalid token silently ignored - it's optional
   }

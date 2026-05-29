@@ -20,6 +20,8 @@ import {
   setAuthCookies,
   clearAuthCookies,
   getRefreshTokenFromRequest,
+  computeDeviceFingerprint,
+  emitCsrfHeader,
 } from "../../utils/cookies.js";
 import type {
   RegisterDto,
@@ -38,15 +40,23 @@ import type {
 // Used by login / verifyOtp / refresh - all three flows return tokens.
 // Centralizing prevents drift between endpoints.
 // ============================================================================
-function sendAuthResponse(req: Request, res: Response, result: AuthResponseDto, status: number) {
-  // Set BOTH access + refresh as httpOnly cookies
-  //   - access  cookie "at" → path=/api/v1   → auto-sent on every API call
-  //   - refresh cookie "rt" → path=/api/v1/auth → only on auth endpoints
-  setAuthCookies(res, result.tokens);
+function sendAuthResponse(
+  req: Request,
+  res: Response,
+  result: AuthResponseDto & { sid?: string },
+  status: number,
+) {
+  // Set httpOnly access + refresh cookies + (readable) CSRF cookie HMAC-bound to sid
+  //   - access  cookie "at"   → path=/api/v1            → auto-sent on every API call
+  //   - refresh cookie "rt"   → path=/api/v1/auth       → only on auth endpoints
+  //   - csrf    cookie "csrf" → path=/api/v1, JS reads  → echo as X-CSRF-Token
+  setAuthCookies(res, { ...result.tokens, sid: result.sid });
 
-  // Body also returns tokens - for mobile/native clients that don't use cookies
+  // Body returns tokens (mobile/native), NOT sid (server-only correlation id)
+  const { sid: _omit, ...publicBody } = result as AuthResponseDto & { sid?: string };
+  void _omit;
   res.status(status).json({
-    ...ApiResponseBuilder.success(result),
+    ...ApiResponseBuilder.success(publicBody),
     requestId: req.id,
   });
 }
@@ -72,11 +82,16 @@ export async function register(req: Request, res: Response): Promise<void> {
 }
 
 // ============================================================================
-// POST /verify-otp - issues tokens, sets refresh cookie
+// POST /verify-otp - marks email verified (NO tokens, NO cookies)
+// ============================================================================
+// User must sign in manually after verification (industry: Amazon/Flipkart flow)
 // ============================================================================
 export async function verifyOtp(req: Request, res: Response): Promise<void> {
   const result = await authService.verifyOtp(req.body as VerifyOtpDto);
-  sendAuthResponse(req, res, result, HttpStatus.OK);
+  res.status(HttpStatus.OK).json({
+    ...ApiResponseBuilder.success(result),
+    requestId: req.id,
+  });
 }
 
 // ============================================================================
@@ -99,6 +114,8 @@ export async function resendOtp(req: Request, res: Response): Promise<void> {
 export async function login(req: Request, res: Response): Promise<void> {
   const result = await authService.login(req.body as LoginDto, {
     ip: req.ip ?? null,
+    ua: (req.headers["user-agent"] ?? null) as string | null,
+    fingerprint: computeDeviceFingerprint(req),
   });
   sendAuthResponse(req, res, result, HttpStatus.OK);
 }
@@ -115,8 +132,12 @@ export async function refresh(req: Request, res: Response): Promise<void> {
     throw new BadRequestError("Refresh token is required");
   }
 
-  const result = await authService.refreshTokens(refreshToken);
-  // Rotation - new refresh cookie replaces old one
+  const result = await authService.refreshTokens(refreshToken, {
+    ip: req.ip ?? null,
+    ua: (req.headers["user-agent"] ?? null) as string | null,
+    fingerprint: computeDeviceFingerprint(req),
+  });
+  // Rotation - new refresh cookie + rotated CSRF replace old ones
   sendAuthResponse(req, res, result, HttpStatus.OK);
 }
 
@@ -157,6 +178,13 @@ export async function logoutAll(req: Request, res: Response): Promise<void> {
 export async function me(req: Request, res: Response): Promise<void> {
   if (!req.user) throw new UnauthorizedError();
   const user = await authService.getMe(req.user.sub);
+
+  // Echo existing CSRF token via response header - frontend caches in memory
+  // and echoes on subsequent mutating requests. Token is STABLE across /me
+  // calls (set at login, rotated only on /refresh) - prevents memory/cookie
+  // drift that was breaking the equality-mode CSRF check.
+  emitCsrfHeader(req, res, req.user.sid);
+
   res.status(HttpStatus.OK).json({
     ...ApiResponseBuilder.success(user),
     requestId: req.id,
