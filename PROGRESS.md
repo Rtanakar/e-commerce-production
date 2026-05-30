@@ -577,3 +577,65 @@ cd web && pnpm dev
 # Sidebar: image-1 items, collapse toggle persists (Zustand+localStorage),
 # light/dark toggle works. No seller session → auto-redirect to /become-seller.
 ```
+
+---
+
+### Session 8 — 2026-05-30 (Dashboard polish + refresh-cookie proxy fix)
+
+Four fixes after first dashboard run-through:
+
+#### 1. Refresh cookie not stored (proxy drops deep-path Set-Cookie)
+- **Bug:** `seller-refresh-token` (path `/api/v1/auth/seller`) never appeared in
+  DevTools; only access + csrf (path `/`) survived. Same root cause behind the
+  customer "Refresh token is required" 400s. The Next.js dev **rewrite proxy**
+  does not reliably persist/forward Set-Cookie headers with a DEEP `Path` — only
+  `Path=/` cookies make it through.
+- **Fix:** `setRefreshCookie` / `clearRefreshCookie` path → **`/`** (both scopes).
+  httpOnly so exposure is minimal. Cookie NAME (`rt` vs `seller-refresh-token`)
+  + host still isolate the jars. TODO noted: re-scope once we move to a
+  Route-Handler BFF proxy (which forwards Set-Cookie correctly via
+  `getSetCookie()`).
+
+#### 2. Sidebar header border misaligned with page header
+- `SellerDashboardSidebar` `SidebarHeader` → **`h-14` + `border-b`** (removed the
+  separate `SidebarSeparator`). Now both the sidebar header and the page header
+  (`h-14 border-b`) share the same bottom-border line (y=56px).
+
+#### 3. UserMenu → real Seller Dashboard link
+- `components/user-menu.tsx`: the VENDOR-only item was `href="/vendor"` → now a
+  cross-host `<a href={sellerUrl("/seller/dashboard")}>` (seller portal lives on
+  the seller subdomain / separate cookie jar). Label "Seller Dashboard". Still
+  gated by `isVendor` → hidden for non-vendors.
+
+#### 4. Sidebar skeletons (UserMenu pattern)
+- `use-seller-me.ts` — now accepts optional `initialData`.
+- `SellerDashboardSidebar` no longer takes a `user` prop; it fetches via
+  `useSellerMe()` and renders **`ShopBrandSkeleton`** (top) + **`ProfileSkeleton`**
+  (bottom) on first mount, then real data (cached 5min) — exactly like the
+  customer `UserMenu` skeleton behaviour. Layout still server-guards
+  (`requireSeller`) and passes the user to the HEADER (instant greeting).
+- `components/dashboard-skeleton.tsx` (NEW) + `app/(seller)/seller/dashboard/loading.tsx`
+  (NEW) — full content skeleton (heading + 4 stat cards + insights/orders) shown
+  on dashboard navigation.
+
+**Files touched (Session 8):**
+- Backend: `utils/cookies.ts` (refresh path `/`)
+- Frontend: `components/user-menu.tsx`, `features/seller/hooks/use-seller-me.ts`,
+  `features/seller/dashboard/components/seller-dashboard-sidebar.tsx`,
+  `app/(seller)/seller/layout.tsx`,
+  `features/seller/dashboard/components/dashboard-skeleton.tsx` (NEW),
+  `app/(seller)/seller/dashboard/loading.tsx` (NEW)
+
+**⚠️ One-time after this change:** existing sessions still hold the stale
+deep-path refresh cookie → clear `seller.localhost` cookies once, restart
+backend, sign in fresh via `/seller-login`. Then DevTools shows all three:
+`seller-access-token`, `seller-refresh-token`, `seller-csrf-token` (all Path=`/`).
+
+**Open / next session:**
+1. **Build real seller modules** — products (image-1 create form), orders,
+   payments, events, discount-codes, inbox, notifications, settings.
+2. **Seller stats/insights/orders APIs** — replace dashboard mocks.
+3. **Route-Handler BFF proxy** — replace Next `rewrites()` so Set-Cookie with
+   scoped paths forwards correctly; then re-scope the refresh cookie.
+4. Carried over: prod cookie domains, OAuth+proxy, Stripe Connect, Twilio creds,
+   customer-side phone verify UI, pre-existing tsc noise.
