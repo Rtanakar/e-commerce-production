@@ -483,3 +483,97 @@ Next 16 ne `middleware.ts` ko deprecate karke **`proxy.ts`** kar diya (function
 - Ref: https://nextjs.org/docs/app/api-reference/file-conventions/proxy
 - NOTE: edge runtime chahiye to `middleware.ts` hi rakhna padega — humein host
   routing ke liye Node.js fine hai, so `proxy.ts` use kiya.
+
+---
+
+### Session 7 — 2026-05-30 (Seller dashboard shell + home)
+
+Seller portal ka pura dashboard banaya — sidebar (Zustand-driven), header,
+guarded shell layout, aur dashboard home (KPIs + AI insights + recent orders).
+**Theme-aware** (shadcn design tokens, light + dark dono — koi hardcoded hex),
+accent = `globals.css` ka `--primary`.
+
+#### Sidebar (Zustand + shadcn, image-1 ke exact nav items)
+- `features/seller/dashboard/store/use-sidebar-store.ts` (NEW) — Zustand
+  `persist` store: desktop expand/collapse, localStorage-backed, `hydrated`
+  flag for SSR-safe controlled state.
+- `components/seller-sidebar-provider.tsx` (NEW) — binds the store to shadcn
+  `<SidebarProvider open onOpenChange>` (controlled). Store = single source of
+  truth; shadcn still owns mobile Sheet + keyboard shortcut + rail.
+- `config/nav.ts` (NEW) — exact reference groups: **Main Menu** (Dashboard,
+  Orders, Payments), **Products** (Create Product, All Products), **Events**
+  (Create Event, All Events), **Controllers** (Inbox, Settings, Notifications),
+  **Extras** (Discount Codes). Logout = footer action.
+- `components/seller-dashboard-sidebar.tsx` (NEW) — shop avatar + name + status
+  header, grouped nav (active = `bg-primary/10 text-primary`), profile dropdown
+  footer (profile / settings / back-to-shop / logout). Collapses to icon-rail.
+
+#### Header + shell
+- `components/seller-dashboard-header.tsx` (NEW) — sticky; SidebarTrigger +
+  greeting + inbox/notifications + ThemeToggle.
+- `lib/seller-auth/server.ts` (NEW) — `getServerSeller()` + `requireSeller()`:
+  reads `seller-access-token` cookie → `/auth/seller/me` → redirect to
+  `/become-seller` if not a VENDOR session (server guard, no flash).
+- Layout restructure:
+  - `(seller)/layout.tsx` → thin pass-through
+  - `(seller)/become-seller/layout.tsx` (NEW) → onboarding `SellerHeader`
+  - `(seller)/seller/layout.tsx` (NEW) → guarded dashboard shell
+    (SellerSidebarProvider + Sidebar + SidebarInset(header + children))
+
+#### Dashboard home (`/seller/dashboard`)
+- `components/stat-cards.tsx` (NEW) — KPI grid, trend deltas (emerald/rose)
+- `components/ai-insights-panel.tsx` (NEW) — 3-column AI summary
+  (Sales Trends / Inventory / Action Items), image-5 inspired
+- `components/recent-orders-panel.tsx` (NEW) — order list + status pills
+- `views/dashboard-view.tsx` (NEW) — composes heading (real shop name +
+  status badge) + KPIs + insights + orders
+- `components/coming-soon.tsx` (NEW) — placeholder; all 10 sidebar routes
+  stubbed (`orders`, `payments`, `products`, `products/new`, `events`,
+  `events/new`, `inbox`, `settings`, `notifications`, `discount-codes`) so the
+  sidebar never 404s.
+- `lib/utils.ts` — added `getInitials()`.
+
+**REAL vs MOCK:** shop name + status come from the verified seller session
+(real). KPIs, AI insights, and orders are clearly-marked MOCK — swap to
+`/seller/stats`, `/seller/insights`, `/seller/orders` when those modules land.
+
+**Files touched (Session 7):**
+- Frontend only: `lib/seller-auth/server.ts` (NEW), `lib/utils.ts`,
+  `features/seller/dashboard/**` (store, config, components, views — all NEW),
+  `app/(seller)/layout.tsx`, `app/(seller)/become-seller/layout.tsx` (NEW),
+  `app/(seller)/seller/layout.tsx` (NEW), `app/(seller)/seller/dashboard/page.tsx`,
+  + 10 stub route pages under `app/(seller)/seller/*`
+
+**Open / next session (updated):**
+1. **Build real seller modules** — products (create/list, the image-1 form),
+   orders, payments/payouts, events, discount-codes, inbox, notifications,
+   settings. Backend `/vendors/*` + new `/seller/*` endpoints needed.
+2. **Seller stats/insights/orders APIs** — replace dashboard mocks.
+3. **`/seller/sign-in`** — returning-seller login page (sets seller jar).
+4. Carried over: prod cookie domains, OAuth+proxy, Stripe Connect, Twilio creds,
+   customer-side phone verify UI, pre-existing tsc noise.
+
+#### Hotfix — access cookie path + seller sign-in
+- **Bug:** seller/customer access cookie was scoped `path=/api/v1`, so the
+  browser never sent it on PAGE/RSC requests (e.g. `/seller/dashboard`).
+  `requireSeller()` saw no session → always redirected to `/become-seller`.
+- **Fix:** `setAccessCookie` path `/api/v1` → **`/`** (standard access-token
+  scope; sent on every request incl. RSC). Refresh cookie stays path-scoped.
+  `clearAccessCookie` now clears both `/` + legacy `/api/v1`.
+- **Seller sign-in (NEW)** — returning sellers had no way to re-auth:
+  - `features/seller/validators/signin.ts`, `components/seller-signin-form.tsx`
+  - `app/(seller)/seller-login/{page,layout}.tsx` (outside the guarded tree)
+  - `proxy.ts` SELLER_PATHS += `/seller-login`
+  - step-account "Login" + step-verify refresh-fallback → `/seller-login`
+- ⚠️ After this change, existing sessions have a STALE `/api/v1` cookie →
+  clear seller.localhost cookies once + restart backend + sign in fresh.
+
+**Dashboard smoke test:**
+```bash
+cd services && pnpm dev
+cd web && pnpm dev
+# Onboard a seller (seller.localhost:3000 → register → verify → shop → bank)
+# → step-complete "Go to seller dashboard" → /seller/dashboard
+# Sidebar: image-1 items, collapse toggle persists (Zustand+localStorage),
+# light/dark toggle works. No seller session → auto-redirect to /become-seller.
+```

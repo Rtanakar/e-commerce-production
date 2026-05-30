@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { QueryProvider } from "@/lib/providers/query-provider";
 import { ThemeProvider } from "@/lib/providers/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -49,7 +50,7 @@ export default function RootLayout({
         <ThemeProvider>
           <QueryProvider>
             <NuqsAdapter>
-              {children}
+              <TooltipProvider>{children}</TooltipProvider>
               <Toaster />
             </NuqsAdapter>
           </QueryProvider>

@@ -46,9 +46,9 @@ export function StepVerify({ email, storedPassword, onDone }: Props) {
     toast.success("Email verified");
 
     if (!storedPassword) {
-      // Refresh wiped the password — can't auto-login. Bounce to restart.
+      // Refresh wiped the password — can't auto-login. Send to seller sign-in.
       toast.info("Please sign in to continue setting up your shop");
-      window.location.href = `/become-seller?step=account`;
+      window.location.href = `/seller-login`;
       return;
     }
 

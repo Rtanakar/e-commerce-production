@@ -48,6 +48,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth/guards";
 import { useSignOut } from "@/lib/auth/hooks";
 import { cn } from "@/lib/utils";
+import { sellerUrl } from "@/lib/portal-urls";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -170,10 +171,18 @@ export function UserMenu() {
                 Admin Dashboard
               </MenuLink>
             )}
+            {/* Seller dashboard lives on the seller subdomain (separate cookie
+                jar) → cross-host <a>, not next/link. Only shown to VENDORs. */}
             {isVendor && (
-              <MenuLink href="/vendor" icon={Store}>
-                Vendor Dashboard
-              </MenuLink>
+              <DropdownMenuItem asChild>
+                <a
+                  href={sellerUrl("/seller/dashboard")}
+                  className="flex cursor-pointer items-center gap-2 rounded-md"
+                >
+                  <Store className="size-4 text-muted-foreground" />
+                  <span>Seller Dashboard</span>
+                </a>
+              </DropdownMenuItem>
             )}
 
             {(isAdmin || isVendor) && (

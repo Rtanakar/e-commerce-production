@@ -1,25 +1,19 @@
 // ============================================================================
-// (seller)/layout.tsx — Seller portal chrome (Amazon Seller Central pattern)
+// (seller)/layout.tsx — Seller portal root (thin pass-through)
 // ============================================================================
-// Completely isolated from customer storefront UI — no SiteHeader, no
-// CategoryBar, no cart icons. Sellers get a focused workspace.
+// The seller portal has TWO distinct chromes, so the per-area layouts own the
+// UI and this root stays empty:
+//   • (seller)/become-seller/layout.tsx → minimal onboarding header
+//   • (seller)/seller/layout.tsx        → full dashboard shell (sidebar)
 //
-// Routes inside (seller):
-//   /become-seller       → onboarding wizard
-//   /seller/dashboard    → seller dashboard (future)
+// Keeping this a pass-through avoids wrapping the dashboard in the onboarding
+// header (and vice-versa).
 // ============================================================================
 
-import { SellerHeader } from "@/features/seller/components/seller-header";
-
-export default function SellerLayout({
+export default function SellerRootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <div className="flex min-h-screen flex-col">
-      <SellerHeader />
-      <main className="flex-1">{children}</main>
-    </div>
-  );
+  return <>{children}</>;
 }

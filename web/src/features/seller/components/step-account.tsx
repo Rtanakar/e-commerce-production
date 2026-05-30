@@ -224,7 +224,7 @@ export function StepAccount({ onDone }: Props) {
         <p className="pt-1 text-center text-xs text-muted-foreground">
           Already have an account?{" "}
           <a
-            href="/sign-in"
+            href="/seller-login"
             className="font-medium text-primary hover:underline"
           >
             Login

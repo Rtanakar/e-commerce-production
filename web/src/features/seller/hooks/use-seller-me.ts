@@ -14,7 +14,10 @@ import type { AuthUser } from "@/lib/auth/api";
 
 export const sellerMeQueryKey = ["seller-auth", "me"] as const;
 
-export function useSellerMe() {
+// `initialData` lets server-rendered shells (the dashboard layout) seed the
+// query with the user they already verified → instant render, no skeleton
+// flash, while still getting live updates + cache invalidation afterwards.
+export function useSellerMe(options: { initialData?: AuthUser } = {}) {
   return useQuery<AuthUser | null, ApiError>({
     queryKey: sellerMeQueryKey,
     queryFn: async () => {
@@ -27,6 +30,7 @@ export function useSellerMe() {
         throw err;
       }
     },
+    initialData: options.initialData,
     staleTime: 5 * 60 * 1000,
     retry: false,
   });

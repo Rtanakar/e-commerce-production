@@ -138,6 +138,16 @@ function refreshPathForScope(scope: AuthScope): string {
 // ============================================================================
 // setAccessCookie - call on login/verify-otp/refresh
 // ============================================================================
+// Path MUST be "/" (not /api/v1). Server Components / RSC page loads read
+// cookies at the PAGE path (e.g. /seller/dashboard) — a cookie scoped to
+// /api/v1 would NOT be sent there, breaking SSR auth guards (requireSeller /
+// requireAuth would always see "no session" → wrongful redirect).
+//
+// "/" = sent on every request (API + pages + RSC). This is the standard
+// access-token scope (Auth0 / NextAuth / Clerk). Security comes from httpOnly
+// + the token itself, not the path. The REFRESH cookie stays path-scoped —
+// that's the powerful long-lived token whose blast radius we minimise.
+// ============================================================================
 export function setAccessCookie(
   res: Response,
   accessToken: string,
@@ -146,13 +156,26 @@ export function setAccessCookie(
   const names = cookieNamesForScope(scope);
   res.cookie(names.ACCESS_TOKEN, accessToken, {
     ...baseCookieOptions(),
-    path: apiBasePath(),
+    path: "/",
     maxAge: parseExpiryToMs(env.JWT_ACCESS_EXPIRES_IN),
   } as CookieOptions);
 }
 
 // ============================================================================
-// setRefreshCookie - path-scoped to /auth (minimize attack surface)
+// setRefreshCookie - path "/"
+// ============================================================================
+// Ideally the refresh cookie would be path-scoped to the auth endpoints
+// (smaller blast radius). BUT the Next.js dev rewrite proxy that fronts the
+// API (web/next.config.ts) does NOT reliably store/forward Set-Cookie headers
+// whose Path is a DEEP sub-path (e.g. /api/v1/auth/seller) — the browser ends
+// up never persisting them (you'd see access + csrf cookies but no refresh).
+// Cookies at Path="/" survive the proxy. Since the refresh token is httpOnly
+// (JS can't read it) the practical exposure is minimal. When we move off the
+// rewrite proxy to a Route-Handler BFF (which forwards Set-Cookie correctly
+// via getSetCookie()), we can re-scope this to the auth path.
+//
+// Cookie NAME still differs per scope (rt vs seller-refresh-token) and the
+// host differs (localhost vs seller.localhost), so the jars stay isolated.
 // ============================================================================
 export function setRefreshCookie(
   res: Response,
@@ -162,7 +185,7 @@ export function setRefreshCookie(
   const names = cookieNamesForScope(scope);
   res.cookie(names.REFRESH_TOKEN, refreshToken, {
     ...baseCookieOptions(),
-    path: refreshPathForScope(scope),
+    path: "/",
     maxAge: parseExpiryToMs(env.JWT_REFRESH_EXPIRES_IN),
   } as CookieOptions);
 }
@@ -353,6 +376,13 @@ export function clearAccessCookie(
   scope: AuthScope = "customer",
 ): void {
   const names = cookieNamesForScope(scope);
+  // Current canonical path "/" (matches setAccessCookie)
+  res.clearCookie(names.ACCESS_TOKEN, {
+    ...baseCookieOptions(),
+    path: "/",
+  } as CookieOptions);
+  // Legacy path "/api/v1" - defensive clear so cookies set by older builds
+  // (pre path-"/" fix) don't linger. No-op if none exists.
   res.clearCookie(names.ACCESS_TOKEN, {
     ...baseCookieOptions(),
     path: apiBasePath(),
@@ -364,6 +394,12 @@ export function clearRefreshCookie(
   scope: AuthScope = "customer",
 ): void {
   const names = cookieNamesForScope(scope);
+  // Current canonical path "/" (matches setRefreshCookie)
+  res.clearCookie(names.REFRESH_TOKEN, {
+    ...baseCookieOptions(),
+    path: "/",
+  } as CookieOptions);
+  // Legacy deep path - defensive clear for cookies set by older builds.
   res.clearCookie(names.REFRESH_TOKEN, {
     ...baseCookieOptions(),
     path: refreshPathForScope(scope),

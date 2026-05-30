@@ -34,7 +34,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // Paths that belong to the SELLER portal. Anything matching these should only
 // be served from the seller host.
-const SELLER_PATHS = ["/become-seller", "/seller"];
+const SELLER_PATHS = ["/become-seller", "/seller", "/seller-login"];
 
 // Auth pages (sign-in/up, OTP, password reset) are SHARED — reachable on
 // either host without a cross-host bounce. A seller and a customer both need
