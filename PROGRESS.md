@@ -64,19 +64,20 @@ e-commerce-production/
 
 ## 🎯 Design Principles (Industry standard for Express ecosystem)
 
-| Layer | Responsibility | Pattern |
-|---|---|---|
-| **Routes** | URL → middleware → controller | `Router()` |
-| **Validator** | Zod schemas (DTOs) | schema objects |
-| **Controller** | HTTP req/res ↔ Service | named `async function` exports |
-| **Service** | Business logic | named `async function` exports |
-| **Repository** | DB queries | named `async function` exports |
-| **Lib (tokens, password)** | Reusable utilities | named function exports |
-| **Middlewares** | Cross-cutting | named functions |
-| **Errors** | Typed error hierarchy | **`class AppError`** + 12 subclasses |
-| **Logger** | Structured logging | singleton (Pino instance) |
+| Layer                      | Responsibility                | Pattern                              |
+| -------------------------- | ----------------------------- | ------------------------------------ |
+| **Routes**                 | URL → middleware → controller | `Router()`                           |
+| **Validator**              | Zod schemas (DTOs)            | schema objects                       |
+| **Controller**             | HTTP req/res ↔ Service        | named `async function` exports       |
+| **Service**                | Business logic                | named `async function` exports       |
+| **Repository**             | DB queries                    | named `async function` exports       |
+| **Lib (tokens, password)** | Reusable utilities            | named function exports               |
+| **Middlewares**            | Cross-cutting                 | named functions                      |
+| **Errors**                 | Typed error hierarchy         | **`class AppError`** + 12 subclasses |
+| **Logger**                 | Structured logging            | singleton (Pino instance)            |
 
 **Why function-based for most things?**
+
 - Express middleware ARE functions — class wrapper is indirection
 - Stateless: no `this` confusion, no constructor DI ceremony
 - `import * as authService from "./auth.service"` clean grouping
@@ -84,6 +85,7 @@ e-commerce-production/
 - Aligns with Express community standard (Stripe SDK, Vercel, Cal.com)
 
 **Why class-based for Errors?**
+
 - `instanceof AppError` is the IDIOMATIC way to discriminate error types
 - Sentry/Datadog auto-classify by class name (analytics grouping)
 - Inheritance — common fields in `AppError`, specifics in subclasses
@@ -118,6 +120,7 @@ Middleware order in `app.ts`:
 ## 🔐 Auth Module (Complete)
 
 **Endpoints** (all under `/api/v1/auth`):
+
 - `POST /register` — public, rate-limited, creates user + vendor profile if VENDOR
 - `POST /login` — public, rate-limited, same error for "no user" + "wrong pwd"
 - `POST /refresh` — token rotation (OWASP), reuse detection kills all sessions
@@ -127,6 +130,7 @@ Middleware order in `app.ts`:
 - `POST /change-password` — protected, revokes all sessions after change
 
 **Security:**
+
 - JWT access (15m) + refresh (30d) — hybrid stateless/stateful
 - Refresh tokens stored in Redis — revocable
 - bcrypt 12 rounds
@@ -135,6 +139,7 @@ Middleware order in `app.ts`:
 - Issuer/audience JWT claims
 
 **Error classes used:**
+
 - `EmailExistsError` (409)
 - `InvalidCredentialsError` (401)
 - `AccountSuspendedError` (403)
@@ -185,6 +190,7 @@ curl -X POST http://localhost:4000/api/v1/auth/register \
 ## 📋 Next Phase TODOs
 
 ### Modules to add (same NestJS-style pattern):
+
 - [ ] **users** — profile, addresses (`/api/v1/users`)
 - [ ] **products** — CRUD, search, vendor scoped
 - [ ] **vendors** — onboarding, KYC, payouts
@@ -197,6 +203,7 @@ curl -X POST http://localhost:4000/api/v1/auth/register \
 - [ ] **notifications** — web push + SMS
 
 ### Cross-cutting:
+
 - [ ] OTP login (phone)
 - [ ] OAuth (Google/Apple)
 - [ ] Email verification flow (mails/)
@@ -213,6 +220,7 @@ curl -X POST http://localhost:4000/api/v1/auth/register \
 ## 📝 Session History
 
 ### Session 2 — 2026-05-25 (rebuild)
+
 - ❌ Monorepo deleted (Turborepo, packages/, apps/ — all gone)
 - ✅ `services/` single Node backend - NestJS-style folder layout
 - ✅ `server.ts` at services root (not in src/)
@@ -220,6 +228,7 @@ curl -X POST http://localhost:4000/api/v1/auth/register \
 - ✅ Auth module complete
 
 ### Session 3 — 2026-05-25 (pattern refinement)
+
 - 🔄 Converted to **function-based** (industry-standard for Express):
   - `logger` → singleton Pino instance (was: `class Logger`)
   - `tokens` → named function exports (was: `class TokenService`)
@@ -240,14 +249,17 @@ curl -X POST http://localhost:4000/api/v1/auth/register \
 **What changed (major refactor — seller is now a fully separate portal):**
 
 #### 1. Route group restructure (`web/src/app/`)
+
 ```
 (shop)/    → customer storefront (SiteHeader + CategoryBar)
 (seller)/  → seller portal (minimal SellerHeader, no shop chrome)
 (auth)/    → centered sign-in/sign-up card
 ```
+
 Root `layout.tsx` ab sirf providers (ThemeProvider, QueryProvider, NuqsAdapter, Toaster). Har route group apna chrome decide karta hai.
 
 #### 2. `features/seller/` — auth ke jaisa modular structure
+
 ```
 web/src/features/seller/
 ├── validators/    account.ts, shop.ts, bank.ts (Zod schemas)
@@ -259,47 +271,54 @@ web/src/features/seller/
                    step-upgrade, step-shop, step-bank, step-complete,
                    step-blocked, onboarding-wizard
 ```
+
 App routes (`(seller)/become-seller/page.tsx`) ab thin shells.
 
 #### 3. Amazon-style auto-seller (no admin gating)
+
 - Anon `/auth/seller/register` → User w/ `role=VENDOR` directly (no admin)
 - Customer → Seller upgrade → automatic role flip
 - `VendorProfile.status=PENDING_REVIEW` ab **non-blocking flag** — seller instantly portal use kar sakta hai. "You're live! Quality review in progress" badge.
 
 #### 4. **Separate seller cookies (security isolation — Amazon Seller Central pattern)**
 
-| Jar | Cookies | Refresh path |
-|---|---|---|
-| Customer | `at`, `rt`, `csrf` | `/api/v1/auth` |
-| Seller | `s_at`, `s_rt`, `s_csrf` | `/api/v1/auth/seller` |
+| Jar      | Cookies                  | Refresh path          |
+| -------- | ------------------------ | --------------------- |
+| Customer | `at`, `rt`, `csrf`       | `/api/v1/auth`        |
+| Seller   | `s_at`, `s_rt`, `s_csrf` | `/api/v1/auth/seller` |
 
 **Why:** seller session theft can't compromise shop session (different sid in Redis, different rotation chain). Logout of one portal doesn't drop the other. Customer + seller can be active simultaneously on same User row.
 
 **Backend changes:**
+
 - `utils/cookies.ts` — sab helpers scope-aware (`AuthScope = "customer" | "seller"`). Default `customer` backward-compatible.
 - `middlewares/require-auth.ts` — `requireSellerAuth` (reads `s_at`, enforces VENDOR) + `requireAnyAuth` (dual-jar fallback for `/onboarding-status`)
 - `middlewares/csrf.ts` — factory-based, `requireCsrf` (customer) + `requireSellerCsrf` (seller)
 - `modules/auth/seller-auth.controller.ts` + `seller-auth.routes.ts` — `/api/v1/auth/seller/{register,verify-otp,resend-otp,login,refresh,logout,me}`
-- `modules/vendor/vendor.service.upgradeToSeller` — customer session NOT revoked anymore; mints fresh seller session for s_* cookies
+- `modules/vendor/vendor.service.upgradeToSeller` — customer session NOT revoked anymore; mints fresh seller session for s\_\* cookies
 - `modules/vendor/vendor.routes.ts` — `setup-shop` + `connect-bank` use `requireSellerAuth`/`requireSellerCsrf`
 - `@types/express.d.ts` — `req.authScope?: AuthScope`
 
 **Frontend changes:**
+
 - `lib/seller-auth/api.ts` — fully separate fetch client (own CSRF memory, hits `/auth/seller/refresh`)
 - `features/seller/hooks/use-seller-me.ts` — TanStack Query on `/auth/seller/me`
 - `lib/seller/api.ts` — `setupShop`/`connectBank`/`getStatus` ab `sellerHttp`. `upgradeToSeller` still customer client (called from customer-cookie context).
 - Wizard considers BOTH seller-me + customer-me to pick initial step
 
 #### 5. nuqs URL state + React 19 cascading-render fix
+
 - `features/seller/server/params-loader.ts` — courses pattern mirror
 - `features/seller/hooks/use-seller-params.ts` — client hook
 - Wizard old `useState + useEffect setState` chain → `useMemo` derive + async `setSellerParams`. Refresh-resilient + shareable links + warning gone.
 
 **Files touched:**
+
 - Backend: `utils/cookies.ts`, `middlewares/require-auth.ts`, `middlewares/csrf.ts`, `modules/auth/seller-auth.{controller,routes}.ts` (NEW), `modules/vendor/{service,controller,routes}.ts`, `app.ts`, `@types/express.d.ts`
 - Frontend: `app/layout.tsx`, `features/seller/**`, `lib/seller-auth/api.ts` (NEW), `lib/seller/api.ts`
 
 **Open / next session:**
+
 1. **`/seller/dashboard` route** — placeholder link in step-complete. Should list products/orders/payouts, show non-blocking "Quality review" banner if status=PENDING_REVIEW.
 2. **`/seller/sign-in`** — dedicated page for returning sellers (current step-verify fallback goes to wizard, not ideal).
 3. **Customer JWT role staleness** — post-upgrade, customer `at` cookie still says `role=CUSTOMER` for up to 15min (until refresh re-reads DB). Older claim grants less access → safe but worth UX note.
@@ -312,17 +331,21 @@ App routes (`(seller)/become-seller/page.tsx`) ab thin shells.
 ### Session 5 — 2026-05-30 (True subdomain isolation + scoped secrets)
 
 User-reported issues addressed:
+
 1. DevTools mein customer (`at/rt/csrf`) aur seller cookies dono har page pe dikh rahi thi.
 2. `.env` mein `JWT_SELLER_*` + `SELLER_CSRF_SECRET` declare the but code use nahi kar raha tha.
 3. Stepper bottom spacing + terminal-step vertical centering.
 
 #### A. Descriptive seller cookie names
+
 `s_at / s_rt / s_csrf` → **`seller-access-token` / `seller-refresh-token` /
 `seller-csrf-token`** (DevTools mein clearly readable). Frontend
 `lib/seller-auth/api.ts` cookie regex updated to match.
 
 #### B. Scoped JWT + CSRF secrets (cryptographic isolation)
+
 Pehle seller tokens customer secret se sign ho rahe the. Ab:
+
 - `env.ts` — `JWT_SELLER_ACCESS_SECRET`, `JWT_SELLER_REFRESH_SECRET`,
   `SELLER_CSRF_SECRET` (all optional → fall back to customer secrets in dev).
 - `lib/tokens.ts` — `accessSecret(scope)` / `refreshSecret(scope)` helpers;
@@ -343,6 +366,7 @@ dekhta hai. Browser ko `localhost:8080` (backend) directly call karne se SAARI
 cookies `localhost` ke neeche aati thi → dono jar har jagah dikhti thi.
 
 Amazon/Flipkart pattern = **alag host per portal + same-origin BFF proxy**:
+
 - `web/next.config.ts` — rewrites `/api/:path*` → `API_PROXY_TARGET`
   (`http://localhost:8080`). Browser ab same-origin `/api/v1/*` call karta hai.
 - Browser clients (`lib/api.ts`, `lib/seller-auth/api.ts`,
@@ -362,6 +386,7 @@ Result: `localhost:3000` pe sirf customer cookies, `seller.localhost:3000` pe
 sirf seller cookies — exactly like the nx-monorepo screenshot.
 
 **Files touched (Session 5):**
+
 - Backend: `config/env.ts`, `lib/tokens.ts`, `utils/cookies.ts`,
   `middlewares/require-auth.ts`, `middlewares/csrf.ts`,
   `modules/auth/auth.service.ts`, `modules/auth/seller-auth.controller.ts`,
@@ -374,6 +399,7 @@ sirf seller cookies — exactly like the nx-monorepo screenshot.
   `.env.example`
 
 **Open / next session (updated):**
+
 1. **`/seller/dashboard`** — still a placeholder link; build the real page.
 2. **`/seller/sign-in`** — dedicated returning-seller login (sets seller jar).
    Currently step-account's "Login" link → shared `/sign-in` (customer jar).
@@ -387,6 +413,7 @@ sirf seller cookies — exactly like the nx-monorepo screenshot.
    `rate-limit.ts:32`, `auth.service.ts:{188,303,355}`, `web/components/ui/calendar.tsx:90`.
 
 **Next session start:**
+
 ```bash
 cd services && pnpm dev    # http://localhost:8080
 cd web && pnpm dev         # serves BOTH hosts on :3000
@@ -412,6 +439,7 @@ all the brute-force protection (lockout, timing-safe compare, atomic attempts,
 cooldown, spam-lock) free mili.
 
 #### Backend
+
 - `lib/sms.ts` (NEW) — provider-agnostic SMS, mirrors `mailer.ts`:
   - `SMS_PROVIDER=console` (dev) → OTP terminal me print, zero config
   - `SMS_PROVIDER=twilio` (prod) → Twilio REST via `fetch` (NO `twilio` SDK dep)
@@ -430,9 +458,10 @@ cooldown, spam-lock) free mili.
   `maskPhone()` so responses never echo the full number
 - Routes (same handlers, jar-specific middleware):
   - Customer: `POST /api/v1/auth/phone/{send-otp,verify}` (requireAuth + requireCsrf)
-  - Seller:   `POST /api/v1/auth/seller/phone/{send-otp,verify}` (requireSellerAuth + requireSellerCsrf)
+  - Seller: `POST /api/v1/auth/seller/phone/{send-otp,verify}` (requireSellerAuth + requireSellerCsrf)
 
 #### Frontend
+
 - `lib/seller-auth/api.ts` — `sendPhoneOtp({phone?})` / `verifyPhoneOtp({otp})`
 - `features/seller/hooks/use-phone-verification.ts` (NEW) — send/verify mutations
   (for future dashboard "verify phone" use)
@@ -447,6 +476,7 @@ cooldown, spam-lock) free mili.
 → SMS OTP auto-sent → verify phone → shop setup. Dev: OTP terminal me dikhega.
 
 **Files touched (Session 6):**
+
 - Backend: `lib/sms.ts` (NEW), `config/env.ts`, `modules/auth/auth.helper.ts`,
   `auth.repository.ts`, `auth.validator.ts`, `auth.service.ts`, `auth.controller.ts`,
   `auth.routes.ts`, `seller-auth.routes.ts`, `.env`
@@ -454,6 +484,7 @@ cooldown, spam-lock) free mili.
   (NEW), `features/seller/components/otp-verify-card.tsx` (NEW), `step-verify.tsx`
 
 **Open / next session (updated):**
+
 1. **Customer-side phone verify UI** — backend endpoints ready
    (`/auth/phone/*`); add a settings/profile component using
    `use-phone-verification` pattern.
@@ -466,6 +497,7 @@ cooldown, spam-lock) free mili.
    `rate-limit.ts:32`, `auth.service.ts:{188,303,355}`, `web/components/ui/calendar.tsx:90`.
 
 **Phone verify smoke test:**
+
 ```bash
 # SMS_PROVIDER=console (default) → OTP services terminal me print hota hai
 # 1. seller.localhost:3000 → register (phone bharo) → email OTP verify
@@ -475,9 +507,11 @@ cooldown, spam-lock) free mili.
 ```
 
 #### Also this session — Next.js 16 `middleware` → `proxy` migration
+
 Next 16 ne `middleware.ts` ko deprecate karke **`proxy.ts`** kar diya (function
 `middleware` → `proxy`, ab Node.js runtime, edge nahi). API same
 (NextRequest/NextResponse, `config.matcher`). Migration:
+
 - `web/src/middleware.ts` → **`web/src/proxy.ts`**, `export function proxy(...)`
 - Codemod bhi hai: `npx @next/codemod@canary middleware-to-proxy .`
 - Ref: https://nextjs.org/docs/app/api-reference/file-conventions/proxy
@@ -494,6 +528,7 @@ guarded shell layout, aur dashboard home (KPIs + AI insights + recent orders).
 accent = `globals.css` ka `--primary`.
 
 #### Sidebar (Zustand + shadcn, image-1 ke exact nav items)
+
 - `features/seller/dashboard/store/use-sidebar-store.ts` (NEW) — Zustand
   `persist` store: desktop expand/collapse, localStorage-backed, `hydrated`
   flag for SSR-safe controlled state.
@@ -509,6 +544,7 @@ accent = `globals.css` ka `--primary`.
   footer (profile / settings / back-to-shop / logout). Collapses to icon-rail.
 
 #### Header + shell
+
 - `components/seller-dashboard-header.tsx` (NEW) — sticky; SidebarTrigger +
   greeting + inbox/notifications + ThemeToggle.
 - `lib/seller-auth/server.ts` (NEW) — `getServerSeller()` + `requireSeller()`:
@@ -521,6 +557,7 @@ accent = `globals.css` ka `--primary`.
     (SellerSidebarProvider + Sidebar + SidebarInset(header + children))
 
 #### Dashboard home (`/seller/dashboard`)
+
 - `components/stat-cards.tsx` (NEW) — KPI grid, trend deltas (emerald/rose)
 - `components/ai-insights-panel.tsx` (NEW) — 3-column AI summary
   (Sales Trends / Inventory / Action Items), image-5 inspired
@@ -538,13 +575,15 @@ accent = `globals.css` ka `--primary`.
 `/seller/stats`, `/seller/insights`, `/seller/orders` when those modules land.
 
 **Files touched (Session 7):**
+
 - Frontend only: `lib/seller-auth/server.ts` (NEW), `lib/utils.ts`,
   `features/seller/dashboard/**` (store, config, components, views — all NEW),
   `app/(seller)/layout.tsx`, `app/(seller)/become-seller/layout.tsx` (NEW),
   `app/(seller)/seller/layout.tsx` (NEW), `app/(seller)/seller/dashboard/page.tsx`,
-  + 10 stub route pages under `app/(seller)/seller/*`
+  - 10 stub route pages under `app/(seller)/seller/*`
 
 **Open / next session (updated):**
+
 1. **Build real seller modules** — products (create/list, the image-1 form),
    orders, payments/payouts, events, discount-codes, inbox, notifications,
    settings. Backend `/vendors/*` + new `/seller/*` endpoints needed.
@@ -554,6 +593,7 @@ accent = `globals.css` ka `--primary`.
    customer-side phone verify UI, pre-existing tsc noise.
 
 #### Hotfix — access cookie path + seller sign-in
+
 - **Bug:** seller/customer access cookie was scoped `path=/api/v1`, so the
   browser never sent it on PAGE/RSC requests (e.g. `/seller/dashboard`).
   `requireSeller()` saw no session → always redirected to `/become-seller`.
@@ -569,6 +609,7 @@ accent = `globals.css` ka `--primary`.
   clear seller.localhost cookies once + restart backend + sign in fresh.
 
 **Dashboard smoke test:**
+
 ```bash
 cd services && pnpm dev
 cd web && pnpm dev
@@ -585,6 +626,7 @@ cd web && pnpm dev
 Four fixes after first dashboard run-through:
 
 #### 1. Refresh cookie not stored (proxy drops deep-path Set-Cookie)
+
 - **Bug:** `seller-refresh-token` (path `/api/v1/auth/seller`) never appeared in
   DevTools; only access + csrf (path `/`) survived. Same root cause behind the
   customer "Refresh token is required" 400s. The Next.js dev **rewrite proxy**
@@ -592,22 +634,25 @@ Four fixes after first dashboard run-through:
   `Path=/` cookies make it through.
 - **Fix:** `setRefreshCookie` / `clearRefreshCookie` path → **`/`** (both scopes).
   httpOnly so exposure is minimal. Cookie NAME (`rt` vs `seller-refresh-token`)
-  + host still isolate the jars. TODO noted: re-scope once we move to a
-  Route-Handler BFF proxy (which forwards Set-Cookie correctly via
-  `getSetCookie()`).
+  - host still isolate the jars. TODO noted: re-scope once we move to a
+    Route-Handler BFF proxy (which forwards Set-Cookie correctly via
+    `getSetCookie()`).
 
 #### 2. Sidebar header border misaligned with page header
+
 - `SellerDashboardSidebar` `SidebarHeader` → **`h-14` + `border-b`** (removed the
   separate `SidebarSeparator`). Now both the sidebar header and the page header
   (`h-14 border-b`) share the same bottom-border line (y=56px).
 
 #### 3. UserMenu → real Seller Dashboard link
+
 - `components/user-menu.tsx`: the VENDOR-only item was `href="/vendor"` → now a
   cross-host `<a href={sellerUrl("/seller/dashboard")}>` (seller portal lives on
   the seller subdomain / separate cookie jar). Label "Seller Dashboard". Still
   gated by `isVendor` → hidden for non-vendors.
 
 #### 4. Sidebar skeletons (UserMenu pattern)
+
 - `use-seller-me.ts` — now accepts optional `initialData`.
 - `SellerDashboardSidebar` no longer takes a `user` prop; it fetches via
   `useSellerMe()` and renders **`ShopBrandSkeleton`** (top) + **`ProfileSkeleton`**
@@ -619,6 +664,7 @@ Four fixes after first dashboard run-through:
   on dashboard navigation.
 
 **Files touched (Session 8):**
+
 - Backend: `utils/cookies.ts` (refresh path `/`)
 - Frontend: `components/user-menu.tsx`, `features/seller/hooks/use-seller-me.ts`,
   `features/seller/dashboard/components/seller-dashboard-sidebar.tsx`,
@@ -632,10 +678,136 @@ backend, sign in fresh via `/seller-login`. Then DevTools shows all three:
 `seller-access-token`, `seller-refresh-token`, `seller-csrf-token` (all Path=`/`).
 
 **Open / next session:**
+
 1. **Build real seller modules** — products (image-1 create form), orders,
    payments, events, discount-codes, inbox, notifications, settings.
 2. **Seller stats/insights/orders APIs** — replace dashboard mocks.
 3. **Route-Handler BFF proxy** — replace Next `rewrites()` so Set-Cookie with
    scoped paths forwards correctly; then re-scope the refresh cookie.
+4. Carried over: prod cookie domains, OAuth+proxy, Stripe Connect, Twilio creds,
+   customer-side phone verify UI, pre-existing tsc noise.
+
+---
+
+### Session 9 — 2026-05-30 (Catalog backend — Product / Category / Discount / Uploads)
+
+Pura product backend banaya — senior pattern (Routes → Validator → Controller →
+Service → Repository), function-based, Hindi inline comments. Migration applied
+(`20260530091816_add_catalog_product_models`). Naye files me zero tsc errors
+(sirf pehle wala known noise bacha).
+
+#### Prisma schema (catalog models)
+
+- **Category** — self-referencing tree (`parentId`), 2-level (category →
+  subcategory). Admin-managed, public read.
+- **Product** — vendor-scoped. Fields: slug/title/brand, shortDescription
+  (plain text), **description = TipTap HTML string `@db.Text` (JSON nahi)**,
+  warranty, videoUrl, category+subcategory, `tags[]`/`colors[]`/`sizes[]`,
+  pricing **minor units (Int)** regularPrice/salePrice + cached discountPercent,
+  stock, cashOnDelivery, `specifications Json` (custom properties), bannerUrl,
+  status (DRAFT/ACTIVE/ARCHIVED/OUT_OF_STOCK), publishedAt, SEO, denormalized
+  counters (rating/sold/view), soft-delete `deletedAt`.
+- **ProductImage** — gallery (1:N). `productId`+`variantId` dono optional:
+  productId set = product gallery, variantId set = variant image (Edit-variant
+  modal). Has key (storage cleanup), isPrimary, position, sizeBytes.
+- **ProductVariant** — title/color/tags/sku/price/stock + apni images.
+- **DiscountCode** — **ALAG table** (M:N with Product), seller-scoped,
+  `@@unique([vendorId, code])`, type PERCENT/FLAT, value/minOrder/maxUses/
+  perUserLimit/startsAt/endsAt/isActive.
+- VendorProfile pe back-relations: `products`, `discountCodes`.
+
+#### Object storage — R2 (primary) + S3 (future), one S3-compatible SDK
+
+- `lib/storage.ts` (NEW) — `STORAGE_PROVIDER` env switch (r2|s3, default r2).
+  `putObject` (server-processed buffer direct upload, CacheControl immutable),
+  `createPresignedUpload` (video/file — content-type whitelist + size guard),
+  `deleteObject`/`deleteObjects` (batch, best-effort), `publicUrl`,
+  `keyFromPublicUrl`, `buildKey` (folder = `<kind>/<userId>/<uuid>.<ext>`).
+- `config/env.ts` — `STORAGE_*`, `R2_*`, `AWS_*`, `STORAGE_PRESIGN_EXPIRY`.
+- deps: `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`.
+
+#### Image optimization — server-side sharp (Amazon/Flipkart style)
+
+**Images backend se guzarti hain** (presigned NAHI), optimize hoke R2 jaati hain
+— DB me sirf optimized URL. Verified: worst-case noise pe 57% chhoti (real
+photos 70-85%).
+
+- `lib/image-processor.ts` (NEW) — `processImage`: EXIF auto-rotate + metadata
+  strip (privacy/size) → resize cap `IMAGE_MAX_DIMENSION` (no upscale) → encode
+  **WebP/AVIF** (env `IMAGE_FORMAT`) @ `IMAGE_QUALITY` 80. `processThumbnail`
+  (listing card variant). sharp non-image pe throw → content-type spoof block.
+- `middlewares/upload-multer.ts` (NEW) — memoryStorage, `IMAGE_MAX_UPLOAD_BYTES`
+  (15MB raw) limit, image/\* filter, MulterError → BadRequest map.
+- `POST /api/v1/uploads/image` (multipart `file`, `?thumbnail=true` optional) →
+  sharp → R2 → `{url,key,format,width,height,sizeBytes,originalBytes}`.
+  CSRF+auth (header-based) multer se PEHLE chalte hain.
+- `config/env.ts` — `IMAGE_FORMAT/QUALITY/MAX_DIMENSION/THUMB_WIDTH/MAX_UPLOAD_BYTES`.
+- deps: `sharp`, `multer` (+`pnpm-workspace.yaml` allowBuilds sharp:true — native).
+- Presign route ab sirf video/large files ke liye (sharp un par nahi chalta).
+
+#### Shared utils
+
+- `utils/slugify.ts` (NEW) — `slugify` + `uniqueSlugify` (collision suffix).
+- `utils/pagination.ts` (NEW) — `buildCursorArgs`/`processCursorPage`/
+  `buildPageMeta`. **Cursor + offset hybrid** (employee/course pattern):
+  `take = limit+1`, stable `orderBy [primary, {id}]`, nextCursor = last id.
+  Pagination products ke saath dynamically grow karta hai (no SKIP/drift).
+- `config/constants.ts` (NEW) — PAGINATION + CATALOG limits.
+
+#### Modules (all under `modules/`)
+
+- **category/** — `GET /api/v1/categories` (tree|flat, public), `GET /:slug`,
+  admin `POST/PATCH/DELETE` (requireAuth + requireRole ADMIN + CSRF). Delete
+  guard: linked products / children na ho.
+- **product/** — endpoints:
+  - PUBLIC: `GET /products` (ACTIVE only, filters: category/sub/tag/brand/
+    price-range/inStock, sort newest|oldest|price|popular|rating|discount),
+    `GET /products/:slug` (detail + view increment).
+  - SELLER (seller cookie jar): `GET /products/seller/mine` (DRAFT bhi, status
+    filter), `GET /products/seller/:id`, `POST /products` (Save Draft=DRAFT /
+    Create=ACTIVE), `PATCH /products/:id` (arrays diye to images/variants/
+    discountCodes REPLACE), `POST /:id/archive` (soft), `POST /:id/restore`
+    (→DRAFT), `DELETE /:id` (hard + R2/S3 media cleanup incl. TipTap-embedded
+    `data-r2-key`/`src` scrape). Ownership: admin any, vendor only own.
+    discountCodeIds vendor-owned filter, category exist validate, slug unique.
+- **discount/** — seller CRUD `GET/POST/GET:id/PATCH/DELETE /api/v1/discounts`
+  (cursor+offset list, search, isActive filter, code uppercase-normalize +
+  per-vendor unique, PERCENT value ≤100 guard).
+- **upload/** — `POST /api/v1/uploads/presign` (image|video|file) + `DELETE
+/api/v1/uploads` (key, folder-prefix ownership guard). Seller cookie jar.
+- `app.ts` — 4 modules mounted under `/api/v1/{categories,products,discounts,uploads}`.
+
+**Money convention:** prices minor units (paise/cents) as Int — float rounding
+se bachne ke liye. Frontend "20$" → 2000 convert karega.
+
+**Files (Session 9, backend only):**
+
+- Schema: `prisma/schema.prisma` (+catalog models, VendorProfile back-rels)
+- New utils/lib/config: `utils/slugify.ts`, `utils/pagination.ts`,
+  `config/constants.ts`, `lib/storage.ts`, `config/env.ts` (storage vars),
+  `.env.example` (storage section), `package.json` (aws-sdk)
+- New modules: `modules/category/*`, `modules/product/*`, `modules/discount/*`,
+  `modules/upload/*` (validator+repository+service+controller+routes each)
+- `modules/vendor/vendor.repository.ts` (+`findVendorIdByUserId`)
+- `app.ts` (route wiring)
+- `lib/openapi.ts` — Swagger docs: catalog schemas register kiye, naya
+  `sellerCookieAuth` security scheme, 4 tags (Categories/Products/Discounts/
+  Uploads), **15 catalog paths** documented (`/uploads/image` multipart binary
+  bhi). Verified `generateOpenApiSpec()` bina error chalti hai → `/api/v1/docs`.
+
+**⚠️ Setup before running:** `.env` me R2 creds bharo (STORAGE_BUCKET,
+STORAGE_PUBLIC_URL, R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) —
+warna upload presign route `ServiceUnavailable` dega (baaki product CRUD bina
+storage ke kaam karega).
+
+**Open / next session:**
+
+1. **Frontend** — image-1 create-product form ko in endpoints se wire karo
+   (presign → R2 PUT → product create), All Products list (cursor pagination),
+   edit/archive/restore, discount-codes table, category dropdown.
+2. **Category seed** — Electronics/Fashion/Home & Kitchen/Sports & Fitness
+   (+subcategories) seed taaki dropdown me data ho.
+3. **Order/inventory** — product purchase pe stock decrement + soldCount, status
+   auto OUT_OF_STOCK jab stock 0.
 4. Carried over: prod cookie domains, OAuth+proxy, Stripe Connect, Twilio creds,
    customer-side phone verify UI, pre-existing tsc noise.

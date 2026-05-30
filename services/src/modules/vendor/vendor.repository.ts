@@ -12,14 +12,24 @@ export async function findVendorProfile(userId: string) {
 }
 
 // ============================================================================
+// findVendorIdByUserId - userId → VendorProfile.id (catalog scoping ke liye)
+// ============================================================================
+// Product / discount modules ko vendorId chahiye (userId nahi). Light projection.
+// ============================================================================
+export async function findVendorIdByUserId(userId: string): Promise<string | null> {
+  const v = await prisma.vendorProfile.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+  return v?.id ?? null;
+}
+
+// ============================================================================
 // shopNameTaken - uniqueness check before create/update
 // ============================================================================
 // Excludes current userId so a vendor can re-save same name without conflict
 // ============================================================================
-export async function shopNameTaken(
-  shopName: string,
-  excludeUserId?: string,
-): Promise<boolean> {
+export async function shopNameTaken(shopName: string, excludeUserId?: string): Promise<boolean> {
   const existing = await prisma.vendorProfile.findUnique({
     where: { shopName },
     select: { userId: true },

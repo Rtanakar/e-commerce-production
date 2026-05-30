@@ -13,10 +13,7 @@ import type { SetupShopDto, ConnectBankDto } from "./vendor.validator.js";
 // ============================================================================
 // GET /vendors/onboarding-status - which step to resume on?
 // ============================================================================
-export async function getOnboardingStatus(
-  req: Request,
-  res: Response,
-): Promise<void> {
+export async function getOnboardingStatus(req: Request, res: Response): Promise<void> {
   if (!req.user) throw new UnauthorizedError();
   const result = await vendorService.getOnboardingStatus(req.user.sub);
   res.status(HttpStatus.OK).json({
@@ -32,15 +29,9 @@ export async function getOnboardingStatus(
 // customer cookies. Customer session is NOT revoked — Amazon-style dual jar.
 // Frontend should refresh the customer /me query so its role claim catches up.
 // ============================================================================
-export async function upgradeToSeller(
-  req: Request,
-  res: Response,
-): Promise<void> {
+export async function upgradeToSeller(req: Request, res: Response): Promise<void> {
   if (!req.user) throw new UnauthorizedError();
-  const fresh = await vendorService.upgradeToSeller(
-    req.user.sub,
-    req.user.sid,
-  );
+  const fresh = await vendorService.upgradeToSeller(req.user.sub, req.user.sid);
 
   // Emit SELLER cookies (s_at / s_rt / s_csrf) — controller's job, not the
   // service. Customer cookies untouched (req.user came from `at` cookie).
@@ -68,10 +59,7 @@ export async function upgradeToSeller(
 // ============================================================================
 export async function setupShop(req: Request, res: Response): Promise<void> {
   if (!req.user) throw new UnauthorizedError();
-  const vendor = await vendorService.setupShop(
-    req.user.sub,
-    req.body as SetupShopDto,
-  );
+  const vendor = await vendorService.setupShop(req.user.sub, req.body as SetupShopDto);
   res.status(HttpStatus.OK).json({
     ...ApiResponseBuilder.success({
       vendor,
@@ -86,10 +74,7 @@ export async function setupShop(req: Request, res: Response): Promise<void> {
 // ============================================================================
 export async function connectBank(req: Request, res: Response): Promise<void> {
   if (!req.user) throw new UnauthorizedError();
-  const result = await vendorService.connectBank(
-    req.user.sub,
-    req.body as ConnectBankDto,
-  );
+  const result = await vendorService.connectBank(req.user.sub, req.body as ConnectBankDto);
   res.status(HttpStatus.OK).json({
     ...ApiResponseBuilder.success({
       ...result,

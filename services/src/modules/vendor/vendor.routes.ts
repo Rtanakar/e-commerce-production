@@ -16,11 +16,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../../middlewares/async-handler.js";
 import { validate } from "../../middlewares/validate.js";
-import {
-  requireAuth,
-  requireSellerAuth,
-  requireAnyAuth,
-} from "../../middlewares/require-auth.js";
+import { requireAuth, requireSellerAuth, requireAnyAuth } from "../../middlewares/require-auth.js";
 import { requireCsrf, requireSellerCsrf } from "../../middlewares/csrf.js";
 import * as vendorController from "./vendor.controller.js";
 import { setupShopSchema, connectBankSchema } from "./vendor.validator.js";

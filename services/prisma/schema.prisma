@@ -180,6 +180,10 @@ model VendorProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Catalog relations — ek vendor ke multiple products + apne discount codes
+  products      Product[]
+  discountCodes DiscountCode[]
+
   @@index([shopSlug])
   @@index([status])
   @@map("vendor_profiles")
@@ -210,4 +214,254 @@ model Address {
   @@index([userId])
   @@index([userId, isDefault])
   @@map("addresses")
+}
+
+// ============================================================================
+// CATALOG — Product, Category, Images, Variants, DiscountCodes
+// ============================================================================
+// Design notes (Amazon/Flipkart pattern):
+//   - Product belongs to a VendorProfile (seller-scoped catalog)
+//   - Category is a self-referencing tree (parentId) → category + subcategory
+//     dono ek hi model se aate hain (admin-managed taxonomy)
+//   - Money minor units me store hota hai (paise/cents) as Int — float se
+//     rounding bugs aate hain, isliye integer best practice (Stripe pattern)
+//   - description = TipTap ka raw HTML string (@db.Text), JSON nahi —
+//     editor.getHTML() seedha store, render pe dangerouslySetInnerHTML/sanitize
+//   - shortDescription = plain text quick-view + SEO indexing ke liye
+//   - Images alag table me (1:N) ordering + primary flag ke saath
+//   - Variants ke apne images ho sakte hain (variantId optional on ProductImage)
+//   - DiscountCode ALAG table (M:N with Product) — ek code multiple products pe
+// ============================================================================
+
+enum ProductStatus {
+  DRAFT // seller ne save kiya par publish nahi (Save Draft button)
+  ACTIVE // live, public listing me dikhega (Create/Publish button)
+  ARCHIVED // soft-delete — listing se hidden, restore ho sakta hai
+  OUT_OF_STOCK // stock 0 — dikhega par "out of stock" badge ke saath
+}
+
+enum DiscountType {
+  PERCENT // value = percentage (e.g. 5 → 5% off)
+  FLAT // value = flat amount in minor units (e.g. 10000 → ₹100 off)
+}
+
+// ============================================================================
+// CATEGORY — self-referencing taxonomy tree (category → subcategory)
+// ============================================================================
+// parentId null  → top-level category (Electronics, Fashion ...)
+// parentId set   → subcategory (Electronics > Mobiles)
+// Admin manage karta hai; seller product banate waqt isme se choose karta hai.
+// ============================================================================
+model Category {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  description String?
+  image       String? // category thumbnail/icon URL
+  position    Int     @default(0) // manual ordering in nav/dropdown
+  isActive    Boolean @default(true)
+
+  // Self relation — tree structure
+  parentId String?
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+
+  // Products jo is category ko main category ya subcategory ke roop me use karte hain
+  productsAsCategory    Product[] @relation("ProductMainCategory")
+  productsAsSubcategory Product[] @relation("ProductSubcategory")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([parentId])
+  @@index([isActive])
+  @@map("categories")
+}
+
+// ============================================================================
+// PRODUCT — core catalog entity (seller-scoped)
+// ============================================================================
+model Product {
+  id String @id @default(cuid())
+
+  // Owner — VendorProfile (seller). Cascade: shop delete → products delete.
+  vendorId String
+  vendor   VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  // ── Identity ──
+  slug  String  @unique // URL slug, title se auto-generate, manually overridable
+  title String
+  brand String?
+
+  // ── Descriptions ──
+  // Plain-text short desc — cards / quick-view / search indexing (max ~150 words)
+  shortDescription String? @db.Text
+  // Rich content from TipTap editor — HTML string (NOT JSON). 1GB TEXT limit.
+  description      String? @db.Text
+
+  warranty String? // "1 Year / No Warranty"
+  videoUrl String? // YouTube embed / product video URL
+
+  // ── Taxonomy ──
+  categoryId    String
+  category      Category  @relation("ProductMainCategory", fields: [categoryId], references: [id])
+  subcategoryId String?
+  subcategory   Category? @relation("ProductSubcategory", fields: [subcategoryId], references: [id])
+
+  // ── Attribute arrays (Postgres native array — fast, no join needed) ──
+  tags   String[] // ["apple", "flagship"]
+  colors String[] // hex strings ["#ffffff", "#ff0000"]
+  sizes  String[] // ["XS","S","M","L","XL","XXL","3XL"]
+
+  // ── Pricing (minor units — paise/cents, Int not float) ──
+  currency        String @default("INR")
+  regularPrice    Int // MRP (Regular Price) in minor units
+  salePrice       Int // selling price (Sale Price) in minor units
+  discountPercent Int    @default(0) // cached, auto-computed from above
+
+  // ── Inventory ──
+  stock          Int     @default(0)
+  cashOnDelivery Boolean @default(true)
+
+  // ── Custom specifications / properties ──
+  // Flexible key/value — yahan JSON theek hai (description NAHI, sirf specs).
+  // Shape: [{ label: "Material", value: "Cotton" }, ...]
+  specifications Json?
+
+  // ── Media ──
+  bannerUrl String? // optional wide banner (separate from gallery images)
+
+  // ── Lifecycle ──
+  status      ProductStatus @default(DRAFT)
+  publishedAt DateTime? // DRAFT → ACTIVE pe ek baar set, dobara reset nahi
+
+  // ── SEO ──
+  metaTitle       String?
+  metaDescription String?
+
+  // ── Denormalized counters (read-heavy aggregates — write pe update) ──
+  ratingAvg   Float @default(0)
+  ratingCount Int   @default(0)
+  soldCount   Int   @default(0)
+  viewCount   Int   @default(0)
+
+  // ── Relations ──
+  images        ProductImage[]
+  variants      ProductVariant[]
+  discountCodes DiscountCode[]   @relation("ProductDiscountCodes")
+
+  // Soft delete (ARCHIVED ke saath deletedAt set — audit/restore ke liye)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Indexes — list/filter/sort queries fast rakhne ke liye
+  @@index([vendorId])
+  @@index([status])
+  @@index([categoryId])
+  @@index([subcategoryId])
+  @@index([vendorId, status]) // seller dashboard "All Products" filter
+  @@index([status, createdAt]) // public listing newest-first
+  @@map("products")
+}
+
+// ============================================================================
+// PRODUCT IMAGE — gallery (1:N), variant images bhi isi table me
+// ============================================================================
+// variantId null  → product-level gallery image
+// variantId set   → us specific variant ki image (Edit variant modal)
+// ============================================================================
+model ProductImage {
+  id String @id @default(cuid())
+
+  // productId set + variantId null → product-level gallery image
+  // productId null + variantId set → variant image (Edit variant modal)
+  // Dono ek hi table me; isliye productId optional (nested create me grandparent
+  // id available nahi hota, isliye variant image sirf variantId se bandhti hai)
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  url       String // public CDN URL (R2/S3)
+  key       String? // storage object key — delete/cleanup ke liye (keyFromPublicUrl fallback)
+  alt       String?
+  isPrimary Boolean @default(false) // main display image
+  position  Int     @default(0) // gallery ordering
+  width     Int?
+  height    Int?
+  sizeBytes Int? // file size (UI "0.46 MB" dikhane ke liye)
+
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+  @@index([variantId])
+  @@map("product_images")
+}
+
+// ============================================================================
+// PRODUCT VARIANT — "Edit your variant" modal (title, color, tags, images)
+// ============================================================================
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  title String // "Green Notebook"
+  color String? // hex
+  tags  String[] // ["green","notebook","time","groove"]
+  sku   String? // stock-keeping unit (optional)
+
+  // Variant-level price/stock override — null = product ke values inherit
+  price Int? // minor units
+  stock Int  @default(0)
+
+  position Int @default(0)
+
+  images ProductImage[] // variant ki apni images
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@map("product_variants")
+}
+
+// ============================================================================
+// DISCOUNT CODE — ALAG table (seller-scoped), M:N with Product
+// ============================================================================
+// "flash back offer (5%)" jaisa — seller apne codes banata hai, fir product
+// create/edit pe multiple codes select kar sakta hai.
+// code vendor ke andar unique (do alag sellers ka "FLASH5" allowed).
+// ============================================================================
+model DiscountCode {
+  id       String        @id @default(cuid())
+  vendorId String
+  vendor   VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  code  String // "FLASH5" (case-normalized uppercase store karenge)
+  title String? // human label — "flash back offer"
+
+  type  DiscountType @default(PERCENT)
+  value Int // PERCENT → 5 ; FLAT → minor units
+
+  minOrder     Int? // minimum order value (minor units) tabhi apply
+  maxUses      Int? // total redemption cap (null = unlimited)
+  usedCount    Int  @default(0)
+  perUserLimit Int? // ek user kitni baar use kar sake
+
+  startsAt DateTime?
+  endsAt   DateTime?
+  isActive Boolean   @default(true)
+
+  products Product[] @relation("ProductDiscountCodes")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([vendorId, code]) // code per-vendor unique
+  @@index([vendorId])
+  @@index([isActive])
+  @@map("discount_codes")
 }

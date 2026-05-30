@@ -22,9 +22,7 @@ const EnvSchema = z.object({
     .default("8080")
     .transform((v) => parseInt(v, 10))
     .pipe(z.number().int().positive()),
-  LOG_LEVEL: z
-    .enum(["fatal", "error", "warn", "info", "debug", "trace"])
-    .default("info"),
+  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 
   // API versioning
   API_PREFIX: z.string().default("api"),
@@ -113,10 +111,7 @@ const EnvSchema = z.object({
     .default("dev_csrf_change_to_32_char_random_string____________"),
   // Seller CSRF secret - separate HMAC key for seller scope.
   // Optional: falls back to CSRF_SECRET if unset.
-  SELLER_CSRF_SECRET: z
-    .string()
-    .min(32, "SELLER_CSRF_SECRET must be at least 32 chars")
-    .optional(),
+  SELLER_CSRF_SECRET: z.string().min(32, "SELLER_CSRF_SECRET must be at least 32 chars").optional(),
 
   // ===== AUTH POLICY =====
   // Strict device binding - on refresh, fingerprint mismatch revokes session.
@@ -179,6 +174,75 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   // Where to redirect after successful OAuth (frontend route)
   GOOGLE_OAUTH_REDIRECT_BASE: z.string().url().default("http://localhost:3000"),
+
+  // ===== OBJECT STORAGE (images / videos / files) =====
+  // Provider switch — primary R2 (Cloudflare), baad me AWS S3 par switch.
+  // Dono S3-compatible API use karte hain (same SDK), bas endpoint/creds alag.
+  //   "r2"  → Cloudflare R2 (S3-compatible, R2_* vars chahiye)
+  //   "s3"  → AWS S3 (AWS_* vars chahiye)
+  // Default "r2" kyunki user pehle R2 use kar raha hai.
+  STORAGE_PROVIDER: z.enum(["r2", "s3"]).default("r2"),
+
+  // Single bucket dono media (image/video/file) ke liye — key prefix se alag.
+  STORAGE_BUCKET: z.string().optional(),
+  // Public base URL — yahin se browser objects fetch karega.
+  //   R2  → custom domain ya https://pub-<hash>.r2.dev
+  //   S3  → https://<bucket>.s3.<region>.amazonaws.com ya CloudFront domain
+  STORAGE_PUBLIC_URL: z.string().url().optional(),
+
+  // ── Cloudflare R2 ──
+  // R2 endpoint: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+  R2_ACCOUNT_ID: z.string().optional(),
+  R2_ENDPOINT: z.string().url().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  // R2 region hamesha "auto"
+  R2_REGION: z.string().default("auto"),
+
+  // ── AWS S3 (future) ──
+  AWS_REGION: z.string().optional(),
+  AWS_ACCESS_KEY_ID: z.string().optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().optional(),
+  // Optional custom endpoint (S3-compatible MinIO/LocalStack ke liye)
+  AWS_S3_ENDPOINT: z.string().url().optional(),
+
+  // Presigned upload URL kitni der valid (seconds)
+  STORAGE_PRESIGN_EXPIRY: z
+    .string()
+    .default("300")
+    .transform((v) => parseInt(v, 10))
+    .pipe(z.number().int().positive()),
+
+  // ===== IMAGE PROCESSING (sharp - Amazon/Flipkart style) =====
+  // Image backend se guzar ke webp/avif me convert + compress hoti hai.
+  //   webp → universal support, fast encode (DEFAULT — Amazon bhi webp serve karta)
+  //   avif → ~20-30% chhoti par slower encode (storage critical ho to)
+  IMAGE_FORMAT: z.enum(["webp", "avif"]).default("webp"),
+  // Quality 1-100. 80 = high quality + accha compression (sweet spot).
+  IMAGE_QUALITY: z
+    .string()
+    .default("80")
+    .transform((v) => parseInt(v, 10))
+    .pipe(z.number().int().min(1).max(100)),
+  // Bade side ka max pixel cap — isse zyada ko proportionally shrink (zoom ke
+  // liye 2000px kaafi; original mat rakho, storage bachao).
+  IMAGE_MAX_DIMENSION: z
+    .string()
+    .default("2000")
+    .transform((v) => parseInt(v, 10))
+    .pipe(z.number().int().positive()),
+  // Listing thumbnail width (responsive — cards me chhoti image, storage minimal)
+  IMAGE_THUMB_WIDTH: z
+    .string()
+    .default("400")
+    .transform((v) => parseInt(v, 10))
+    .pipe(z.number().int().positive()),
+  // Raw upload ka max size (compress se PEHLE) — multer limit, DoS guard
+  IMAGE_MAX_UPLOAD_BYTES: z
+    .string()
+    .default(String(15 * 1024 * 1024)) // 15 MB
+    .transform((v) => parseInt(v, 10))
+    .pipe(z.number().int().positive()),
 
   // ===== OBSERVABILITY =====
   SENTRY_DSN: z.string().optional(),

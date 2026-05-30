@@ -108,15 +108,11 @@ export async function upgradeToSeller(
   if (!user) throw new NotFoundError("User");
 
   if (user.role === "ADMIN") {
-    throw new ForbiddenError(
-      "Admin accounts cannot be converted to seller accounts",
-    );
+    throw new ForbiddenError("Admin accounts cannot be converted to seller accounts");
   }
 
   if (!user.emailVerified) {
-    throw new ForbiddenError(
-      "Please verify your email before becoming a seller",
-    );
+    throw new ForbiddenError("Please verify your email before becoming a seller");
   }
 
   // Idempotent — already VENDOR? Skip DB write, but still mint seller session
@@ -164,9 +160,7 @@ export async function setupShop(userId: string, input: SetupShopDto) {
   }
 
   if (!user.emailVerified) {
-    throw new ForbiddenError(
-      "Please verify your email before setting up your shop",
-    );
+    throw new ForbiddenError("Please verify your email before setting up your shop");
   }
 
   // Uniqueness check - exclude self so re-save with same name works

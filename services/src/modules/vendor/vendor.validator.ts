@@ -53,10 +53,7 @@ export const setupShopSchema = z
     // Compliance - optional at this step, mandatory at "Connect Bank" step
     gstNumber: z
       .string()
-      .regex(
-        /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/,
-        "Invalid GSTIN format",
-      )
+      .regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/, "Invalid GSTIN format")
       .optional(),
     panNumber: z
       .string()
@@ -79,9 +76,7 @@ export const connectBankDirectSchema = z
   .object({
     mode: z.literal("direct"),
     bankAccountName: z.string().min(2).max(120).trim(),
-    bankAccountNumber: z
-      .string()
-      .regex(/^[0-9]{9,18}$/, "Invalid bank account number"),
+    bankAccountNumber: z.string().regex(/^[0-9]{9,18}$/, "Invalid bank account number"),
     bankIfscCode: z
       .string()
       .regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC format")

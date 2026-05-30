@@ -50,6 +50,10 @@ import { HttpStatus } from "./utils/http-status.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import sellerAuthRoutes from "./modules/auth/seller-auth.routes.js";
 import vendorRoutes from "./modules/vendor/vendor.routes.js";
+import categoryRoutes from "./modules/category/category.routes.js";
+import productRoutes from "./modules/product/product.routes.js";
+import discountRoutes from "./modules/discount/discount.routes.js";
+import uploadRoutes from "./modules/upload/upload.routes.js";
 import healthRoutes from "./modules/health/health.routes.js";
 import docsRoutes from "./modules/docs/docs.routes.js";
 
@@ -260,14 +264,21 @@ app.use(`${apiBase}/auth/seller`, sellerAuthRoutes);
 // Status: GET  /api/v1/vendors/onboarding-status
 app.use(`${apiBase}/vendors`, vendorRoutes);
 
+// ----- Catalog modules -----
+// Categories:  GET /api/v1/categories (public) + admin CRUD
+// Products:    GET /api/v1/products (public) + seller CRUD + archive/restore
+// Discounts:   /api/v1/discounts (seller-scoped CRUD)
+// Uploads:     POST /api/v1/uploads/presign + DELETE /api/v1/uploads (seller)
+app.use(`${apiBase}/categories`, categoryRoutes);
+app.use(`${apiBase}/products`, productRoutes);
+app.use(`${apiBase}/discounts`, discountRoutes);
+app.use(`${apiBase}/uploads`, uploadRoutes);
+
 // ----- FUTURE MODULES (uncomment as they are built) -----
 // app.use(`${apiBase}/users`,         userRoutes);
-// app.use(`${apiBase}/products`,      productRoutes);
-// app.use(`${apiBase}/vendors`,       vendorRoutes);
 // app.use(`${apiBase}/cart`,          cartRoutes);
 // app.use(`${apiBase}/orders`,        orderRoutes);
 // app.use(`${apiBase}/payments`,      paymentRoutes);
-// app.use(`${apiBase}/uploads`,       uploadRoutes);
 // app.use(`${apiBase}/notifications`, notificationRoutes);
 // app.use(`${apiBase}/search`,        searchRoutes);
 // app.use(`${apiBase}/reviews`,       reviewRoutes);
