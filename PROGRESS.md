@@ -232,3 +232,254 @@ curl -X POST http://localhost:4000/api/v1/auth/register \
 - ✅ Routes use `import * as authController` pattern (cleaner grouping)
 
 **Next session start:** Run setup steps → build `modules/users` or `modules/products` next, same function-based pattern.
+
+---
+
+### Session 4 — 2026-05-29 (Seller Portal v2 — Amazon-style isolation)
+
+**What changed (major refactor — seller is now a fully separate portal):**
+
+#### 1. Route group restructure (`web/src/app/`)
+```
+(shop)/    → customer storefront (SiteHeader + CategoryBar)
+(seller)/  → seller portal (minimal SellerHeader, no shop chrome)
+(auth)/    → centered sign-in/sign-up card
+```
+Root `layout.tsx` ab sirf providers (ThemeProvider, QueryProvider, NuqsAdapter, Toaster). Har route group apna chrome decide karta hai.
+
+#### 2. `features/seller/` — auth ke jaisa modular structure
+```
+web/src/features/seller/
+├── validators/    account.ts, shop.ts, bank.ts (Zod schemas)
+├── constants/     countries.ts, constants.ts
+├── hooks/         use-onboarding-status, use-seller-me, use-seller-params,
+│                  use-upgrade-to-seller, use-setup-shop, use-connect-bank
+├── server/        params-loader.ts (nuqs URL state SSOT)
+└── components/    seller-header, stepper, step-account, step-verify,
+                   step-upgrade, step-shop, step-bank, step-complete,
+                   step-blocked, onboarding-wizard
+```
+App routes (`(seller)/become-seller/page.tsx`) ab thin shells.
+
+#### 3. Amazon-style auto-seller (no admin gating)
+- Anon `/auth/seller/register` → User w/ `role=VENDOR` directly (no admin)
+- Customer → Seller upgrade → automatic role flip
+- `VendorProfile.status=PENDING_REVIEW` ab **non-blocking flag** — seller instantly portal use kar sakta hai. "You're live! Quality review in progress" badge.
+
+#### 4. **Separate seller cookies (security isolation — Amazon Seller Central pattern)**
+
+| Jar | Cookies | Refresh path |
+|---|---|---|
+| Customer | `at`, `rt`, `csrf` | `/api/v1/auth` |
+| Seller | `s_at`, `s_rt`, `s_csrf` | `/api/v1/auth/seller` |
+
+**Why:** seller session theft can't compromise shop session (different sid in Redis, different rotation chain). Logout of one portal doesn't drop the other. Customer + seller can be active simultaneously on same User row.
+
+**Backend changes:**
+- `utils/cookies.ts` — sab helpers scope-aware (`AuthScope = "customer" | "seller"`). Default `customer` backward-compatible.
+- `middlewares/require-auth.ts` — `requireSellerAuth` (reads `s_at`, enforces VENDOR) + `requireAnyAuth` (dual-jar fallback for `/onboarding-status`)
+- `middlewares/csrf.ts` — factory-based, `requireCsrf` (customer) + `requireSellerCsrf` (seller)
+- `modules/auth/seller-auth.controller.ts` + `seller-auth.routes.ts` — `/api/v1/auth/seller/{register,verify-otp,resend-otp,login,refresh,logout,me}`
+- `modules/vendor/vendor.service.upgradeToSeller` — customer session NOT revoked anymore; mints fresh seller session for s_* cookies
+- `modules/vendor/vendor.routes.ts` — `setup-shop` + `connect-bank` use `requireSellerAuth`/`requireSellerCsrf`
+- `@types/express.d.ts` — `req.authScope?: AuthScope`
+
+**Frontend changes:**
+- `lib/seller-auth/api.ts` — fully separate fetch client (own CSRF memory, hits `/auth/seller/refresh`)
+- `features/seller/hooks/use-seller-me.ts` — TanStack Query on `/auth/seller/me`
+- `lib/seller/api.ts` — `setupShop`/`connectBank`/`getStatus` ab `sellerHttp`. `upgradeToSeller` still customer client (called from customer-cookie context).
+- Wizard considers BOTH seller-me + customer-me to pick initial step
+
+#### 5. nuqs URL state + React 19 cascading-render fix
+- `features/seller/server/params-loader.ts` — courses pattern mirror
+- `features/seller/hooks/use-seller-params.ts` — client hook
+- Wizard old `useState + useEffect setState` chain → `useMemo` derive + async `setSellerParams`. Refresh-resilient + shareable links + warning gone.
+
+**Files touched:**
+- Backend: `utils/cookies.ts`, `middlewares/require-auth.ts`, `middlewares/csrf.ts`, `modules/auth/seller-auth.{controller,routes}.ts` (NEW), `modules/vendor/{service,controller,routes}.ts`, `app.ts`, `@types/express.d.ts`
+- Frontend: `app/layout.tsx`, `features/seller/**`, `lib/seller-auth/api.ts` (NEW), `lib/seller/api.ts`
+
+**Open / next session:**
+1. **`/seller/dashboard` route** — placeholder link in step-complete. Should list products/orders/payouts, show non-blocking "Quality review" banner if status=PENDING_REVIEW.
+2. **`/seller/sign-in`** — dedicated page for returning sellers (current step-verify fallback goes to wizard, not ideal).
+3. **Customer JWT role staleness** — post-upgrade, customer `at` cookie still says `role=CUSTOMER` for up to 15min (until refresh re-reads DB). Older claim grants less access → safe but worth UX note.
+4. **`NEXT_PUBLIC_API_URL` centralization** — duplicated in `lib/api.ts` and `lib/seller-auth/api.ts`.
+5. **Stripe Connect** — bank step `stripe` mode still stub.
+6. **Pre-existing typecheck noise** (NOT introduced this session): `prisma/seed.ts:11`, `rate-limit.ts:32`, `auth.service.ts:{188,303,355}` null-vs-string, `web/components/ui/calendar.tsx:90`.
+
+---
+
+### Session 5 — 2026-05-30 (True subdomain isolation + scoped secrets)
+
+User-reported issues addressed:
+1. DevTools mein customer (`at/rt/csrf`) aur seller cookies dono har page pe dikh rahi thi.
+2. `.env` mein `JWT_SELLER_*` + `SELLER_CSRF_SECRET` declare the but code use nahi kar raha tha.
+3. Stepper bottom spacing + terminal-step vertical centering.
+
+#### A. Descriptive seller cookie names
+`s_at / s_rt / s_csrf` → **`seller-access-token` / `seller-refresh-token` /
+`seller-csrf-token`** (DevTools mein clearly readable). Frontend
+`lib/seller-auth/api.ts` cookie regex updated to match.
+
+#### B. Scoped JWT + CSRF secrets (cryptographic isolation)
+Pehle seller tokens customer secret se sign ho rahe the. Ab:
+- `env.ts` — `JWT_SELLER_ACCESS_SECRET`, `JWT_SELLER_REFRESH_SECRET`,
+  `SELLER_CSRF_SECRET` (all optional → fall back to customer secrets in dev).
+- `lib/tokens.ts` — `accessSecret(scope)` / `refreshSecret(scope)` helpers;
+  `signAccess` / `signRefresh` / `verifyAccessToken` / `verifyRefreshToken` /
+  `createSession` / `rotateSession` sab `scope` param lete hai.
+- `utils/cookies.ts` — `csrfSecret(scope)`; `generateCsrfToken` /
+  `verifyCsrfToken` / `setCsrfCookie` / `emitCsrfHeader` scope-aware.
+- Wiring: `auth.service.login` + `refreshTokens` accept scope;
+  `seller-auth.controller` passes `"seller"`; `requireSellerAuth` +
+  `requireAnyAuth` + csrf middleware verify with the right secret.
+- Net effect: ek secret leak hone par doosri surface ke tokens forge nahi ho
+  sakte (Stripe Connect-style key family separation).
+
+#### C. **True cookie-jar isolation via subdomain + same-origin proxy**
+
+Root cause samjha: cookies us HOST se bind hoti hai jo browser response mein
+dekhta hai. Browser ko `localhost:8080` (backend) directly call karne se SAARI
+cookies `localhost` ke neeche aati thi → dono jar har jagah dikhti thi.
+
+Amazon/Flipkart pattern = **alag host per portal + same-origin BFF proxy**:
+- `web/next.config.ts` — rewrites `/api/:path*` → `API_PROXY_TARGET`
+  (`http://localhost:8080`). Browser ab same-origin `/api/v1/*` call karta hai.
+- Browser clients (`lib/api.ts`, `lib/seller-auth/api.ts`,
+  `google-auth-button.tsx`) → **relative** base `/api/v1` (was absolute).
+- `lib/auth/server.ts` (RSC fetcher) → `INTERNAL_API_URL` (absolute, server-only).
+- `web/src/proxy.ts` (NEW — Next.js 16 `proxy` convention, see Session 6 note)
+  — host-based routing:
+  - `seller.localhost:3000/` → rewrite to `/become-seller`
+  - shop-only path on seller host → redirect to shop host (and vice versa)
+  - `(auth)` pages (`/sign-in` etc.) shared on both hosts (no bounce)
+- `lib/portal-urls.ts` (NEW) — `shopUrl()` / `sellerUrl()` for cross-host
+  links. Seller header "Back to shop", step-complete, step-blocked ab plain
+  `<a href>` cross-origin (clean jar switch), not next/link.
+- `*.localhost` auto-resolves to 127.0.0.1 (RFC 6761) — no hosts edit.
+
+Result: `localhost:3000` pe sirf customer cookies, `seller.localhost:3000` pe
+sirf seller cookies — exactly like the nx-monorepo screenshot.
+
+**Files touched (Session 5):**
+- Backend: `config/env.ts`, `lib/tokens.ts`, `utils/cookies.ts`,
+  `middlewares/require-auth.ts`, `middlewares/csrf.ts`,
+  `modules/auth/auth.service.ts`, `modules/auth/seller-auth.controller.ts`,
+  `modules/vendor/vendor.service.ts`, `.env` (CORS both hosts)
+- Frontend: `next.config.ts`, `src/proxy.ts` (NEW; was `middleware.ts`, renamed
+  in Session 6), `lib/portal-urls.ts` (NEW), `lib/api.ts`,
+  `lib/seller-auth/api.ts`, `lib/auth/server.ts`,
+  `features/auth/components/google-auth-button.tsx`,
+  `features/seller/components/{seller-header,step-complete,step-blocked,onboarding-wizard}.tsx`,
+  `.env.example`
+
+**Open / next session (updated):**
+1. **`/seller/dashboard`** — still a placeholder link; build the real page.
+2. **`/seller/sign-in`** — dedicated returning-seller login (sets seller jar).
+   Currently step-account's "Login" link → shared `/sign-in` (customer jar).
+3. **Customer JWT role staleness** — post-upgrade `at` cookie role lags ≤ access TTL.
+4. **Prod cookie domains** — set `COOKIE_DOMAIN` per host or rely on host-only;
+   verify SameSite when shop + seller are real subdomains of `eshop.com`.
+5. **OAuth callback + proxy** — Google callback hits backend directly
+   (`localhost:8080/.../callback`); confirm cookie host is correct under proxy.
+6. **Stripe Connect** — bank step `stripe` mode still stub.
+7. **Pre-existing typecheck noise** (NOT from these sessions): `prisma/seed.ts:11`,
+   `rate-limit.ts:32`, `auth.service.ts:{188,303,355}`, `web/components/ui/calendar.tsx:90`.
+
+**Next session start:**
+```bash
+cd services && pnpm dev    # http://localhost:8080
+cd web && pnpm dev         # serves BOTH hosts on :3000
+
+# Shop:   http://localhost:3000
+# Seller: http://seller.localhost:3000   (*.localhost auto-resolves)
+
+# Smoke test isolation:
+# 1. Open seller.localhost:3000 → register → OTP → verify
+#    DevTools (seller.localhost): ONLY seller-access-token / -refresh-token / -csrf-token
+#    DevTools (localhost):        ONLY customer at/rt/csrf — no seller cookies
+# 2. Customer signed in on localhost:3000, click "Sell on Eshop" → seller.localhost
+#    → upgrade → seller cookies set under seller.localhost ONLY
+```
+
+---
+
+### Session 6 — 2026-05-30 (Phone verification — SMS OTP)
+
+`phoneVerified` column ab actually use hota hai. Reused the existing OTP core
+(identifier-based) — phone bas ek namespaced identifier (`phone:+91...`) hai, so
+all the brute-force protection (lockout, timing-safe compare, atomic attempts,
+cooldown, spam-lock) free mili.
+
+#### Backend
+- `lib/sms.ts` (NEW) — provider-agnostic SMS, mirrors `mailer.ts`:
+  - `SMS_PROVIDER=console` (dev) → OTP terminal me print, zero config
+  - `SMS_PROVIDER=twilio` (prod) → Twilio REST via `fetch` (NO `twilio` SDK dep)
+- `config/env.ts` — `SMS_PROVIDER`, `TWILIO_ACCOUNT_SID/AUTH_TOKEN/FROM_NUMBER/MESSAGING_SERVICE_SID`
+- `auth.helper.ts` — `sendOtpSms()` orchestrator + `verifyPhoneOtp()` (phone
+  identifier namespacing keeps counters separate from email OTP)
+- `auth.repository.ts` — `phoneExists(phone, excludeUserId)`, `updateUserPhone`
+  (resets phoneVerified), `markPhoneVerified`
+- `auth.validator.ts` — `sendPhoneOtpSchema` (optional E.164 phone),
+  `verifyPhoneOtpSchema` (6-digit otp)
+- `auth.service.ts` — `sendPhoneOtp(userId, {phone?})` (set/change + uniqueness +
+  idempotent if already verified), `verifyPhoneOtpForUser(userId, {otp})` →
+  stamps phoneVerified
+- `auth.controller.ts` — `sendPhoneOtp` / `verifyPhoneOtp` handlers
+  (scope-agnostic, only `req.user.sub`, no cookie writes → safe to share both jars);
+  `maskPhone()` so responses never echo the full number
+- Routes (same handlers, jar-specific middleware):
+  - Customer: `POST /api/v1/auth/phone/{send-otp,verify}` (requireAuth + requireCsrf)
+  - Seller:   `POST /api/v1/auth/seller/phone/{send-otp,verify}` (requireSellerAuth + requireSellerCsrf)
+
+#### Frontend
+- `lib/seller-auth/api.ts` — `sendPhoneOtp({phone?})` / `verifyPhoneOtp({otp})`
+- `features/seller/hooks/use-phone-verification.ts` (NEW) — send/verify mutations
+  (for future dashboard "verify phone" use)
+- `features/seller/components/otp-verify-card.tsx` (NEW) — reusable 6-digit OTP
+  card (input + auto-submit + resend cooldown + error reset)
+- `features/seller/components/step-verify.tsx` — refactored to **2 phases**:
+  email OTP → (auto sign-in) → phone OTP → onDone. Both are sub-states of
+  node 1 "Create Account" (matches the "Email + phone verified upfront" hint).
+  Phone send failure is non-blocking (skip → verify later from dashboard).
+
+**Flow now:** register (phone stored) → email OTP → auto-login (seller cookies)
+→ SMS OTP auto-sent → verify phone → shop setup. Dev: OTP terminal me dikhega.
+
+**Files touched (Session 6):**
+- Backend: `lib/sms.ts` (NEW), `config/env.ts`, `modules/auth/auth.helper.ts`,
+  `auth.repository.ts`, `auth.validator.ts`, `auth.service.ts`, `auth.controller.ts`,
+  `auth.routes.ts`, `seller-auth.routes.ts`, `.env`
+- Frontend: `lib/seller-auth/api.ts`, `features/seller/hooks/use-phone-verification.ts`
+  (NEW), `features/seller/components/otp-verify-card.tsx` (NEW), `step-verify.tsx`
+
+**Open / next session (updated):**
+1. **Customer-side phone verify UI** — backend endpoints ready
+   (`/auth/phone/*`); add a settings/profile component using
+   `use-phone-verification` pattern.
+2. **`/seller/dashboard`** — build it; show "Verify phone" prompt if
+   `phoneVerified` null.
+3. **`/seller/sign-in`**, **prod cookie domains**, **OAuth+proxy**,
+   **Stripe Connect** — carried over from Session 5.
+4. **Twilio prod creds** — set `SMS_PROVIDER=twilio` + `TWILIO_*` when going live.
+5. **Pre-existing typecheck noise** (NOT from these sessions): `prisma/seed.ts:11`,
+   `rate-limit.ts:32`, `auth.service.ts:{188,303,355}`, `web/components/ui/calendar.tsx:90`.
+
+**Phone verify smoke test:**
+```bash
+# SMS_PROVIDER=console (default) → OTP services terminal me print hota hai
+# 1. seller.localhost:3000 → register (phone bharo) → email OTP verify
+# 2. Auto: SMS OTP bhejta hai → terminal me "SMS (dev console)" block dekho
+# 3. Woh 6-digit code daalo → phone verified → shop setup
+# DB: users.phoneVerified ab timestamp set (pehle NULL tha)
+```
+
+#### Also this session — Next.js 16 `middleware` → `proxy` migration
+Next 16 ne `middleware.ts` ko deprecate karke **`proxy.ts`** kar diya (function
+`middleware` → `proxy`, ab Node.js runtime, edge nahi). API same
+(NextRequest/NextResponse, `config.matcher`). Migration:
+- `web/src/middleware.ts` → **`web/src/proxy.ts`**, `export function proxy(...)`
+- Codemod bhi hai: `npx @next/codemod@canary middleware-to-proxy .`
+- Ref: https://nextjs.org/docs/app/api-reference/file-conventions/proxy
+- NOTE: edge runtime chahiye to `middleware.ts` hi rakhna padega — humein host
+  routing ke liye Node.js fine hai, so `proxy.ts` use kiya.

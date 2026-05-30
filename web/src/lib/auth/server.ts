@@ -23,8 +23,15 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { AuthUser, UserRole } from "./api";
 
+// SERVER-side fetcher → needs an ABSOLUTE backend URL (relative `/api/v1`
+// only works in the browser where there's an origin). Server components run
+// in Node, so we hit the backend directly (no proxy hop needed server-side).
+// Separate var from the browser's NEXT_PUBLIC_API_URL so leaving that unset
+// (→ browser uses relative proxy) doesn't break SSR here.
 const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1";
+  process.env.INTERNAL_API_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:8080/api/v1";
 
 // ============================================================================
 // Backend envelope (mirrors services/src/interfaces/api-response.ts)

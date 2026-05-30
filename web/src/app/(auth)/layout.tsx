@@ -11,9 +11,9 @@
 "use client";
 
 import type { ReactNode } from "react";
-import Link from "next/link";
 import { motion } from "motion/react";
 import { useRequireGuest } from "@/lib/auth/guards";
+import { SiteHeader } from "@/components/shared/site-header";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -32,6 +32,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           </Link>
         </div>
       </header> */}
+      <SiteHeader />
 
       <main className="flex min-h-[calc(100vh-3.5rem)] items-center justify-center px-4 py-12">
         {isReady ? (

@@ -47,6 +47,91 @@ export async function requireAuth(
 }
 
 // ============================================================================
+// requireSellerAuth - strict: SELLER scope token required (s_at cookie or Bearer)
+// ============================================================================
+// Reads from the seller cookie jar (s_at) instead of customer (at). Used by
+// /api/v1/auth/seller/* + /api/v1/vendors/* routes. Asserts role=VENDOR so a
+// CUSTOMER who somehow has a seller cookie (shouldn't happen) is still blocked.
+// Also tags req.authScope so downstream helpers emit the right cookie names.
+// ============================================================================
+export async function requireSellerAuth(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const token = getAccessTokenFromRequest(req, "seller");
+  if (!token) {
+    return next(new UnauthorizedError("Seller authorization required"));
+  }
+  try {
+    // Verify with seller secret (JWT_SELLER_ACCESS_SECRET) - a customer
+    // access token presented here will fail signature check.
+    const payload = verifyAccessToken(token, "seller");
+    if (await isAccessJtiRevoked(payload.jti)) {
+      return next(new SessionRevokedError("Seller session was revoked"));
+    }
+    if (payload.role !== "VENDOR") {
+      // Seller cookies should only carry VENDOR tokens. Defense in depth.
+      return next(new ForbiddenError("Seller portal requires a vendor account"));
+    }
+    req.user = payload;
+    req.authScope = "seller";
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ============================================================================
+// requireAnyAuth - accept EITHER cookie jar (seller preferred, customer fallback)
+// ============================================================================
+// For endpoints like /vendors/onboarding-status that are called from both
+// pre-upgrade (customer cookies only) AND post-register (seller cookies only)
+// flows. Tries seller scope first — if a seller token is present and valid,
+// it's the more authoritative answer for vendor questions. Falls back to
+// customer scope otherwise.
+//
+// Tags req.authScope so downstream cookie helpers know which jar to update.
+// ============================================================================
+export async function requireAnyAuth(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  // ── Try seller scope first (verify with seller secret) ──
+  const sellerToken = getAccessTokenFromRequest(req, "seller");
+  if (sellerToken) {
+    try {
+      const payload = verifyAccessToken(sellerToken, "seller");
+      if (!(await isAccessJtiRevoked(payload.jti))) {
+        req.user = payload;
+        req.authScope = "seller";
+        return next();
+      }
+    } catch {
+      /* fall through to customer */
+    }
+  }
+
+  // ── Fallback to customer scope (verify with customer secret) ──
+  const customerToken = getAccessTokenFromRequest(req, "customer");
+  if (!customerToken) {
+    return next(new UnauthorizedError("Authorization token required"));
+  }
+  try {
+    const payload = verifyAccessToken(customerToken, "customer");
+    if (await isAccessJtiRevoked(payload.jti)) {
+      return next(new SessionRevokedError("Session was revoked"));
+    }
+    req.user = payload;
+    req.authScope = "customer";
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ============================================================================
 // optionalAuth - token if present, otherwise continue
 // ============================================================================
 // Public routes with personalized content - feed, homepage etc.

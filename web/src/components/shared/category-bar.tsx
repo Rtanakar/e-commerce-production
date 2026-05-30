@@ -42,7 +42,7 @@ const NAV_LINKS: readonly NavLink[] = [
   { href: "/shops", label: "Shops" },
   { href: "/offers", label: "Offers" },
   // Become A Seller - vendor CTA, highlighted styling
-  { href: "/become-a-seller", label: "Become A Seller", highlight: true },
+  { href: "/become-seller", label: "Become A Seller", highlight: true },
 ];
 
 // ============================================================================
@@ -68,7 +68,7 @@ export function CategoryBar() {
   return (
     <div className="border-b bg-background">
       {/* Same container width as SiteHeader row-1 for perfect vertical alignment */}
-      <div className="mx-auto flex h-12 max-w-[1440px] items-center gap-1 px-6 lg:px-8">
+      <div className="mx-auto flex h-12 max-w-360 items-center gap-1 px-6 lg:px-8">
         {/* ----- All Departments dropdown (left, blue accent) ----- */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

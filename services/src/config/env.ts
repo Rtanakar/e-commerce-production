@@ -43,8 +43,23 @@ const EnvSchema = z.object({
   REDIS_URL: z.string().url(),
 
   // ===== JWT =====
+  // Customer-scope secrets - shop traffic, customer cookies (at/rt)
   JWT_ACCESS_SECRET: z.string().min(32, "JWT_ACCESS_SECRET must be at least 32 chars"),
   JWT_REFRESH_SECRET: z.string().min(32, "JWT_REFRESH_SECRET must be at least 32 chars"),
+  // Seller-scope secrets - seller portal traffic, seller cookies
+  // (seller-access-token / seller-refresh-token). Separate secrets = full
+  // cryptographic isolation. Customer token signing key compromise CANNOT
+  // forge a valid seller token, and vice versa. Amazon / Stripe Connect
+  // pattern: each surface has its own signing key family.
+  // Optional: if unset, falls back to customer secrets (single-key dev mode).
+  JWT_SELLER_ACCESS_SECRET: z
+    .string()
+    .min(32, "JWT_SELLER_ACCESS_SECRET must be at least 32 chars")
+    .optional(),
+  JWT_SELLER_REFRESH_SECRET: z
+    .string()
+    .min(32, "JWT_SELLER_REFRESH_SECRET must be at least 32 chars")
+    .optional(),
   // Format: <number><unit>  unit ∈ {s, m, h, d, w}
   // FAANG default: access 15m + refresh 7d (industry standard - was 30d, but
   // OWASP recommends shorter lived refresh tokens to limit replay window)
@@ -96,6 +111,12 @@ const EnvSchema = z.object({
     .string()
     .min(32, "CSRF_SECRET must be at least 32 chars")
     .default("dev_csrf_change_to_32_char_random_string____________"),
+  // Seller CSRF secret - separate HMAC key for seller scope.
+  // Optional: falls back to CSRF_SECRET if unset.
+  SELLER_CSRF_SECRET: z
+    .string()
+    .min(32, "SELLER_CSRF_SECRET must be at least 32 chars")
+    .optional(),
 
   // ===== AUTH POLICY =====
   // Strict device binding - on refresh, fingerprint mismatch revokes session.
@@ -137,6 +158,18 @@ const EnvSchema = z.object({
   SMTP_PASSWORD: z.string().optional(),
   EMAIL_FROM: z.string().default("E-Commerce <no-reply@shop.local>"),
   EMAIL_FROM_NAME: z.string().default("E-Commerce"),
+
+  // ===== SMS (phone OTP) =====
+  // Provider switch: "console" (dev - logs OTP to terminal, no real SMS) or
+  // "twilio" (prod - real SMS via Twilio REST API, no SDK dependency).
+  // Default "console" so dev works out-of-the-box with zero config.
+  SMS_PROVIDER: z.enum(["console", "twilio"]).default("console"),
+  // Twilio creds - required only when SMS_PROVIDER=twilio (validated at send time)
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  // Sender: either a Twilio phone number (+1...) OR a Messaging Service SID (MG...)
+  TWILIO_FROM_NUMBER: z.string().optional(),
+  TWILIO_MESSAGING_SERVICE_SID: z.string().optional(),
 
   // ===== GOOGLE OAUTH =====
   // Get credentials: https://console.cloud.google.com/apis/credentials

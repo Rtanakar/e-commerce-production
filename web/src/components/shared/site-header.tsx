@@ -44,11 +44,11 @@ export function SiteHeader() {
       initial={{ y: -40, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.4, ease: EASE }}
-      className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+      className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80"
     >
       {/* ===== ROW 1 - logo / search / user / wishlist / cart ===== */}
       {/* max-w-[1440px] - Amazon/Flipkart use ~1500px container for wider feel */}
-      <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-6 px-6 lg:px-8">
+      <div className="mx-auto flex h-16 max-w-360 items-center gap-6 px-6 lg:px-8">
         {/* ----- Logo (left) ----- */}
         <Link
           href="/"

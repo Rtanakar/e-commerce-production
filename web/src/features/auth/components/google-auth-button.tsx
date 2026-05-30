@@ -25,8 +25,9 @@ interface GoogleAuthButtonProps {
   redirectTo?: string;
 }
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1";
+// Relative base — same-origin proxy (see lib/api.ts). The window.location
+// redirect to /api/v1/auth/google is forwarded to the backend by Next.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/v1";
 
 export function GoogleAuthButton({
   mode,

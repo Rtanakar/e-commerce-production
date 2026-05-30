@@ -26,6 +26,8 @@ import {
   resendOtpSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  sendPhoneOtpSchema,
+  verifyPhoneOtpSchema,
 } from "./auth.validator.js";
 
 const router: Router = Router();
@@ -182,6 +184,35 @@ router.post(
   requireAuth,
   validate(changePasswordSchema),
   asyncHandler(authController.changePassword),
+);
+
+// ----- Phone verification (SMS OTP) - customer cookie jar -----
+/**
+ * @route POST /api/v1/auth/phone/send-otp
+ * @desc Send an SMS OTP to the user's phone (optionally set/change it first)
+ * @access Protected (customer)
+ */
+router.post(
+  "/phone/send-otp",
+  otpRateLimit,
+  requireCsrf,
+  requireAuth,
+  validate(sendPhoneOtpSchema),
+  asyncHandler(authController.sendPhoneOtp),
+);
+
+/**
+ * @route POST /api/v1/auth/phone/verify
+ * @desc Verify the SMS OTP and stamp phoneVerified
+ * @access Protected (customer)
+ */
+router.post(
+  "/phone/verify",
+  authRateLimit,
+  requireCsrf,
+  requireAuth,
+  validate(verifyPhoneOtpSchema),
+  asyncHandler(authController.verifyPhoneOtp),
 );
 
 export default router;

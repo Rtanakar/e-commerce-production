@@ -17,8 +17,11 @@
 //   as a REQUEST header on every POST/PUT/PATCH/DELETE.
 // ============================================================================
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1";
+// RELATIVE base by default — the browser calls same-origin `/api/v1/*`, which
+// next.config.ts proxies to the backend. Same-origin = cookies keyed to the
+// current host (localhost vs seller.localhost) = proper jar isolation.
+// Override with NEXT_PUBLIC_API_URL only for non-proxied setups (e.g. native).
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/v1";
 
 // ============================================================================
 // Backend envelope (mirrors services/src/interfaces/api-response.ts)

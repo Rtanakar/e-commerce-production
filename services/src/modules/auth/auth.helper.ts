@@ -21,10 +21,20 @@
 import crypto from "node:crypto";
 import { redis, RedisKeys } from "../../lib/redis.js";
 import { sendEmail } from "../../lib/mailer.js";
+import { sendSms } from "../../lib/sms.js";
 import { otpEmail, passwordResetEmail } from "../../mails/templates.js";
 import { TooManyRequestsError, BadRequestError } from "../../utils/errors.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../utils/logger.js";
+
+// ============================================================================
+// Phone OTP identifier - namespaced so phone counters/keys never collide with
+// email OTP keys (same Redis OTP machinery, different identifier prefix).
+// e.g. email key:  otp:user@x.com    phone key:  otp:phone:+9198...
+// ============================================================================
+function phoneOtpIdentifier(phoneE164: string): string {
+  return `phone:${phoneE164}`;
+}
 
 // ============================================================================
 // OTP CONFIG - centralized for easy tuning
@@ -178,6 +188,63 @@ export async function sendOtpEmail(input: {
   await sendEmail({ to: input.email, subject, html });
 
   logger.info({ email: input.email, purpose: input.purpose }, "OTP sent");
+}
+
+// ============================================================================
+// sendOtpSms — phone OTP orchestrator (check → track → store → SMS)
+// ============================================================================
+// Same sequence as sendOtpEmail but uses the phone identifier + SMS transport.
+// Identifier namespacing keeps phone rate-limit counters separate from email.
+//
+// purpose drives the SMS copy ("verification" / "login"). Body kept short —
+// carriers truncate >160 chars and OTP messages should be minimal anyway.
+// ============================================================================
+export async function sendOtpSms(input: {
+  phone: string; // E.164, e.g. "+919876543210"
+  purpose?: "verification" | "login";
+}): Promise<void> {
+  const identifier = phoneOtpIdentifier(input.phone);
+
+  // 1. Read-only restriction checks (spam-lock + cooldown)
+  await checkOtpRestrictions(identifier);
+
+  // 2. Commit the request slot (atomic INCR + spam-lock on exceed)
+  await trackOtpRequest(identifier);
+
+  // 3. Generate + store OTP (+ cooldown marker)
+  const otp = generateOtp();
+  await Promise.all([
+    redis.set(RedisKeys.otp(identifier), otp, "EX", OTP_CONFIG.ttlSeconds),
+    redis.set(
+      RedisKeys.otpCooldown(identifier),
+      "1",
+      "EX",
+      OTP_CONFIG.cooldownSeconds,
+    ),
+  ]);
+
+  // 4. Send SMS (I/O last). On failure the OTP stays in Redis → user retries.
+  const minutes = Math.round(OTP_CONFIG.ttlSeconds / 60);
+  const body = `Your Eshop verification code is ${otp}. It expires in ${minutes} minutes. Do not share it with anyone.`;
+  await sendSms({ to: input.phone, body });
+
+  logger.info(
+    { phone: input.phone, purpose: input.purpose ?? "verification" },
+    "Phone OTP sent",
+  );
+}
+
+// ============================================================================
+// verifyPhoneOtp — thin wrapper over verifyOtp using the phone identifier
+// ============================================================================
+// Reuses ALL the brute-force protection of verifyOtp (lockout, timing-safe
+// compare, atomic attempt counter, one-time use). Just namespaces the key.
+// ============================================================================
+export async function verifyPhoneOtp(
+  phoneE164: string,
+  providedOtp: string,
+): Promise<boolean> {
+  return verifyOtp(phoneOtpIdentifier(phoneE164), providedOtp);
 }
 
 // ============================================================================

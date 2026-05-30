@@ -27,6 +27,16 @@ import { env, isProd } from "../config/env.js";
 // ============================================================================
 // Cookie names - constants (avoid magic strings)
 // ============================================================================
+// Customer cookies (default - shop traffic): at / rt / csrf
+// Seller   cookies (Amazon Seller Central): seller-access-token /
+//                                           seller-refresh-token /
+//                                           seller-csrf-token
+//
+// Why separate: a logged-in customer on /shop and a logged-in seller on
+// /seller-portal can co-exist (different cookie jars, different sessions).
+// Stealing seller's refresh doesn't compromise their shopping account. Logout
+// of one portal doesn't drop the other. Matches Amazon / Flipkart / Shopify.
+// ============================================================================
 export const CookieNames = {
   /** Access token - httpOnly, path=/api/v1, short-lived */
   ACCESS_TOKEN: "at",
@@ -35,6 +45,23 @@ export const CookieNames = {
   /** CSRF token mirror - NON httpOnly so JS can read + echo in X-CSRF-Token */
   CSRF: "csrf",
 } as const;
+
+/** Seller-portal cookies - parallel to customer set, isolated session jar.
+ *  Descriptive names (vs customer's terse at/rt/csrf) so DevTools makes it
+ *  obvious which jar a cookie belongs to. Matches Amazon Seller Central /
+ *  Shopify Partners convention of using verbose `sp_*_token`-style names. */
+export const SellerCookieNames = {
+  ACCESS_TOKEN: "seller-access-token",
+  REFRESH_TOKEN: "seller-refresh-token",
+  CSRF: "seller-csrf-token",
+} as const;
+
+/** Auth scope - which cookie jar this request/response belongs to */
+export type AuthScope = "customer" | "seller";
+
+export function cookieNamesForScope(scope: AuthScope) {
+  return scope === "seller" ? SellerCookieNames : CookieNames;
+}
 
 /** Request header that double-submits the CSRF token from frontend JS */
 export const CSRF_HEADER = "x-csrf-token";
@@ -98,12 +125,26 @@ function apiBasePath(): string {
 function authBasePath(): string {
   return `${apiBasePath()}/auth`;
 }
+/** Seller refresh cookie scoped to /api/v1/auth/seller - tighter blast radius
+ *  than customer's /api/v1/auth so a customer-route compromise can't see it. */
+function sellerAuthBasePath(): string {
+  return `${authBasePath()}/seller`;
+}
+
+function refreshPathForScope(scope: AuthScope): string {
+  return scope === "seller" ? sellerAuthBasePath() : authBasePath();
+}
 
 // ============================================================================
 // setAccessCookie - call on login/verify-otp/refresh
 // ============================================================================
-export function setAccessCookie(res: Response, accessToken: string): void {
-  res.cookie(CookieNames.ACCESS_TOKEN, accessToken, {
+export function setAccessCookie(
+  res: Response,
+  accessToken: string,
+  scope: AuthScope = "customer",
+): void {
+  const names = cookieNamesForScope(scope);
+  res.cookie(names.ACCESS_TOKEN, accessToken, {
     ...baseCookieOptions(),
     path: apiBasePath(),
     maxAge: parseExpiryToMs(env.JWT_ACCESS_EXPIRES_IN),
@@ -113,10 +154,15 @@ export function setAccessCookie(res: Response, accessToken: string): void {
 // ============================================================================
 // setRefreshCookie - path-scoped to /auth (minimize attack surface)
 // ============================================================================
-export function setRefreshCookie(res: Response, refreshToken: string): void {
-  res.cookie(CookieNames.REFRESH_TOKEN, refreshToken, {
+export function setRefreshCookie(
+  res: Response,
+  refreshToken: string,
+  scope: AuthScope = "customer",
+): void {
+  const names = cookieNamesForScope(scope);
+  res.cookie(names.REFRESH_TOKEN, refreshToken, {
     ...baseCookieOptions(),
-    path: authBasePath(),
+    path: refreshPathForScope(scope),
     maxAge: parseExpiryToMs(env.JWT_REFRESH_EXPIRES_IN),
   } as CookieOptions);
 }
@@ -131,8 +177,15 @@ export function setRefreshCookie(res: Response, refreshToken: string): void {
 //
 // HMAC-bound to session (sid) so token can't be reused across users.
 // ============================================================================
-export function setCsrfCookie(res: Response, sid: string): string {
-  const token = generateCsrfToken(sid);
+export function setCsrfCookie(
+  res: Response,
+  sid: string,
+  scope: AuthScope = "customer",
+): string {
+  // HMAC with the scope's secret so seller CSRF tokens verify only with
+  // SELLER_CSRF_SECRET (and vice versa).
+  const token = generateCsrfToken(sid, scope);
+  const names = cookieNamesForScope(scope);
 
   // ----- Defensive: clear legacy csrf cookies from earlier path scopes -----
   // Earlier versions of this service scoped csrf to /api/v1 (matching access
@@ -141,12 +194,12 @@ export function setCsrfCookie(res: Response, sid: string): string {
   // instead of replacing it - user ends up with two csrf cookies in DevTools.
   // We pre-emit a clear directive for the legacy path so the browser drops it.
   // No-op if no legacy cookie exists (browser silently ignores).
-  res.clearCookie(CookieNames.CSRF, {
+  res.clearCookie(names.CSRF, {
     ...baseCookieOptions({ httpOnly: false }),
     path: apiBasePath(),
   } as CookieOptions);
 
-  res.cookie(CookieNames.CSRF, token, {
+  res.cookie(names.CSRF, token, {
     ...baseCookieOptions({
       // CRITICAL: JS must read this → httpOnly:false (double-submit fallback)
       httpOnly: false,
@@ -160,12 +213,28 @@ export function setCsrfCookie(res: Response, sid: string): string {
 }
 
 // ============================================================================
-// generateCsrfToken - HMAC(secret, sid + nonce) - prevents cross-user reuse
+// CSRF secret resolution - scope-aware
 // ============================================================================
-export function generateCsrfToken(sid: string): string {
+// Seller scope uses SELLER_CSRF_SECRET if configured. Same isolation property
+// as JWT secrets: customer CSRF key compromise can't forge seller tokens.
+// ============================================================================
+function csrfSecret(scope: AuthScope): string {
+  if (scope === "seller" && env.SELLER_CSRF_SECRET) {
+    return env.SELLER_CSRF_SECRET;
+  }
+  return env.CSRF_SECRET;
+}
+
+// ============================================================================
+// generateCsrfToken - HMAC(scope-secret, sid + nonce) - prevents cross-user reuse
+// ============================================================================
+export function generateCsrfToken(
+  sid: string,
+  scope: AuthScope = "customer",
+): string {
   const nonce = crypto.randomBytes(16).toString("hex");
   const hmac = crypto
-    .createHmac("sha256", env.CSRF_SECRET)
+    .createHmac("sha256", csrfSecret(scope))
     .update(`${sid}.${nonce}`)
     .digest("hex");
   // Token format: <nonce>.<hmac> - server verifies by re-HMACing with sid
@@ -175,14 +244,18 @@ export function generateCsrfToken(sid: string): string {
 // ============================================================================
 // verifyCsrfToken - re-compute HMAC and timing-safe compare
 // ============================================================================
-export function verifyCsrfToken(token: string, sid: string): boolean {
+export function verifyCsrfToken(
+  token: string,
+  sid: string,
+  scope: AuthScope = "customer",
+): boolean {
   if (!token || !sid) return false;
   const parts = token.split(".");
   if (parts.length !== 2) return false;
   const [nonce, hmac] = parts;
   if (!nonce || !hmac) return false;
   const expected = crypto
-    .createHmac("sha256", env.CSRF_SECRET)
+    .createHmac("sha256", csrfSecret(scope))
     .update(`${sid}.${nonce}`)
     .digest("hex");
   // timing-safe compare prevents byte-level timing oracle
@@ -204,11 +277,12 @@ export function verifyCsrfToken(token: string, sid: string): boolean {
 export function setAuthCookies(
   res: Response,
   tokens: { accessToken: string; refreshToken: string; sid?: string },
+  scope: AuthScope = "customer",
 ): void {
-  setAccessCookie(res, tokens.accessToken);
-  setRefreshCookie(res, tokens.refreshToken);
+  setAccessCookie(res, tokens.accessToken, scope);
+  setRefreshCookie(res, tokens.refreshToken, scope);
   if (tokens.sid) {
-    const csrfToken = setCsrfCookie(res, tokens.sid);
+    const csrfToken = setCsrfCookie(res, tokens.sid, scope);
     // ALSO push the CSRF token as a response header so the frontend can
     // capture it without depending on document.cookie path-scoping rules.
     // Stripe/GitHub Dashboard pattern - the header is the canonical source,
@@ -240,9 +314,15 @@ export function setAuthCookies(
 // Cold-start fallback: if user has a valid session cookie but somehow no
 // csrf cookie (legacy session, manual delete, etc.), generate + set it.
 // ============================================================================
-export function emitCsrfHeader(req: Request, res: Response, sid: string): void {
+export function emitCsrfHeader(
+  req: Request,
+  res: Response,
+  sid: string,
+  scope: AuthScope = "customer",
+): void {
   const cookies = (req.cookies as Record<string, string> | undefined) ?? {};
-  const existing = cookies[CookieNames.CSRF];
+  const names = cookieNamesForScope(scope);
+  const existing = cookies[names.CSRF];
 
   if (existing) {
     // Happy path: just echo what the browser already has
@@ -252,8 +332,8 @@ export function emitCsrfHeader(req: Request, res: Response, sid: string): void {
 
   // Cold-start: session is valid but csrf cookie missing - mint a fresh one.
   // This handles browsers that cleared 3rd-party cookies, legacy logins, etc.
-  const token = generateCsrfToken(sid);
-  res.cookie(CookieNames.CSRF, token, {
+  const token = generateCsrfToken(sid, scope);
+  res.cookie(names.CSRF, token, {
     ...baseCookieOptions({ httpOnly: false }),
     path: "/",
     maxAge: parseExpiryToMs(env.JWT_REFRESH_EXPIRES_IN),
@@ -268,47 +348,66 @@ export function emitCsrfHeader(req: Request, res: Response, sid: string): void {
 // as setCookie - browser matches the "cookie identity" by these fields.
 // Mismatch → browser ignores the clear and cookie persists.
 // ============================================================================
-export function clearAccessCookie(res: Response): void {
-  res.clearCookie(CookieNames.ACCESS_TOKEN, {
+export function clearAccessCookie(
+  res: Response,
+  scope: AuthScope = "customer",
+): void {
+  const names = cookieNamesForScope(scope);
+  res.clearCookie(names.ACCESS_TOKEN, {
     ...baseCookieOptions(),
     path: apiBasePath(),
   } as CookieOptions);
 }
 
-export function clearRefreshCookie(res: Response): void {
-  res.clearCookie(CookieNames.REFRESH_TOKEN, {
+export function clearRefreshCookie(
+  res: Response,
+  scope: AuthScope = "customer",
+): void {
+  const names = cookieNamesForScope(scope);
+  res.clearCookie(names.REFRESH_TOKEN, {
     ...baseCookieOptions(),
-    path: authBasePath(),
+    path: refreshPathForScope(scope),
   } as CookieOptions);
 }
 
-export function clearCsrfCookie(res: Response): void {
+export function clearCsrfCookie(
+  res: Response,
+  scope: AuthScope = "customer",
+): void {
+  const names = cookieNamesForScope(scope);
   // Current canonical path
-  res.clearCookie(CookieNames.CSRF, {
+  res.clearCookie(names.CSRF, {
     ...baseCookieOptions({ httpOnly: false }),
     path: "/",
   } as CookieOptions);
   // Legacy path (earlier versions scoped csrf to /api/v1) - defensive clear
   // ensures users upgrading from older builds don't carry stale duplicates.
   // Safe to call - browser ignores if no cookie exists at that path.
-  res.clearCookie(CookieNames.CSRF, {
+  res.clearCookie(names.CSRF, {
     ...baseCookieOptions({ httpOnly: false }),
     path: apiBasePath(),
   } as CookieOptions);
 }
 
-export function clearAuthCookies(res: Response): void {
-  clearAccessCookie(res);
-  clearRefreshCookie(res);
-  clearCsrfCookie(res);
+export function clearAuthCookies(
+  res: Response,
+  scope: AuthScope = "customer",
+): void {
+  clearAccessCookie(res, scope);
+  clearRefreshCookie(res, scope);
+  clearCsrfCookie(res, scope);
 }
 
 // ============================================================================
 // Token extraction - cookie OR Authorization header
 // ============================================================================
-export function getAccessTokenFromRequest(req: Request): string | undefined {
+export function getAccessTokenFromRequest(
+  req: Request,
+  scope: AuthScope = "customer",
+): string | undefined {
+  const names = cookieNamesForScope(scope);
   const fromCookie = (req.cookies as Record<string, string> | undefined)?.[
-    CookieNames.ACCESS_TOKEN
+    names.ACCESS_TOKEN
   ];
   if (fromCookie) return fromCookie;
 
@@ -320,9 +419,13 @@ export function getAccessTokenFromRequest(req: Request): string | undefined {
   return undefined;
 }
 
-export function getRefreshTokenFromRequest(req: Request): string | undefined {
+export function getRefreshTokenFromRequest(
+  req: Request,
+  scope: AuthScope = "customer",
+): string | undefined {
+  const names = cookieNamesForScope(scope);
   const fromCookie = (req.cookies as Record<string, string> | undefined)?.[
-    CookieNames.REFRESH_TOKEN
+    names.REFRESH_TOKEN
   ];
   if (fromCookie) return fromCookie;
 
@@ -330,8 +433,12 @@ export function getRefreshTokenFromRequest(req: Request): string | undefined {
   return body?.refreshToken;
 }
 
-export function getCsrfTokenFromCookie(req: Request): string | undefined {
-  return (req.cookies as Record<string, string> | undefined)?.[CookieNames.CSRF];
+export function getCsrfTokenFromCookie(
+  req: Request,
+  scope: AuthScope = "customer",
+): string | undefined {
+  const names = cookieNamesForScope(scope);
+  return (req.cookies as Record<string, string> | undefined)?.[names.CSRF];
 }
 
 export function getCsrfTokenFromHeader(req: Request): string | undefined {

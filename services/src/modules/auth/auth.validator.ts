@@ -48,16 +48,16 @@ export const registerSchema = z
     name: z.string().min(2).max(100).trim().openapi({ example: "John Doe" }),
     // Public signup: CUSTOMER or VENDOR. ADMIN only via admin-create endpoint
     role: z.enum(["CUSTOMER", "VENDOR"]).optional().default("CUSTOMER"),
-    // VENDOR only - shop name (slug auto-generated)
-    shopName: z.string().min(2).max(100).trim().optional().openapi({
-      example: "Awesome Goods Store",
-      description: "Required for VENDOR role",
-    }),
+    // VENDOR seller onboarding flow: shopName collected in step 2 (setup-shop),
+    // NOT at registration. This decouples account creation from shop setup -
+    // industry pattern (Amazon Seller Central / Flipkart Seller Hub / Shopify
+    // Partners). Account first, shop details after email verified.
+    phone: z
+      .string()
+      .regex(/^\+?[1-9]\d{7,14}$/, "Invalid phone number")
+      .optional(),
+    country: z.string().length(2).optional().default("IN"),
   })
-  .refine(
-    (data) => data.role !== "VENDOR" || (data.shopName && data.shopName.length >= 2),
-    { message: "shopName is required for VENDOR role", path: ["shopName"] },
-  )
   .openapi("RegisterRequest");
 
 // ============================================================================
@@ -82,6 +82,36 @@ export const resendOtpSchema = z
     email: z.string().email().toLowerCase().trim(),
   })
   .openapi("ResendOtpRequest");
+
+// ============================================================================
+// Phone OTP schemas (SMS verification - protected endpoints)
+// ============================================================================
+// userId comes from the auth token (req.user.sub), NOT the body. Body only
+// carries an OPTIONAL phone — present when the user is setting/changing their
+// number, absent to (re)send to the phone already on file.
+const phoneNumberSchema = z
+  .string()
+  .regex(/^\+[1-9]\d{7,14}$/, "Phone must be E.164, e.g. +919876543210")
+  .openapi({ example: "+919876543210" });
+
+export const sendPhoneOtpSchema = z
+  .object({
+    phone: phoneNumberSchema.optional(),
+  })
+  .openapi("SendPhoneOtpRequest");
+
+export const verifyPhoneOtpSchema = z
+  .object({
+    otp: z
+      .string()
+      .length(6, "OTP must be 6 digits")
+      .regex(/^\d+$/, "OTP must be numeric")
+      .openapi({ example: "123456" }),
+  })
+  .openapi("VerifyPhoneOtpRequest");
+
+export type SendPhoneOtpDto = z.infer<typeof sendPhoneOtpSchema>;
+export type VerifyPhoneOtpDto = z.infer<typeof verifyPhoneOtpSchema>;
 
 // ============================================================================
 // Forgot password schema

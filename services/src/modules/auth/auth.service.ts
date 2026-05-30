@@ -35,6 +35,8 @@ import type {
   ForgotPasswordDto,
   ResetPasswordDto,
   AuthResponseDto,
+  SendPhoneOtpDto,
+  VerifyPhoneOtpDto,
 } from "./auth.validator.js";
 
 // ============================================================================
@@ -55,10 +57,9 @@ export async function register(input: RegisterDto): Promise<{ email: string; otp
   // Defense in depth - Zod already validated, but workers/scripts might bypass
   assertRequired(input, ["email", "password", "name"]);
 
-  // VENDOR role requires shopName
-  if (input.role === "VENDOR" && !input.shopName) {
-    throw new BadRequestError("shopName is required for VENDOR role");
-  }
+  // NOTE: shopName NO LONGER required at register time. Sellers create the
+  // shop in step 2 (POST /vendors/setup-shop) after OTP verification - matches
+  // Amazon Seller Central / Flipkart Seller Hub / Shopify onboarding flow.
 
   if (await authRepo.emailExists(input.email)) {
     throw new EmailExistsError();
@@ -71,7 +72,12 @@ export async function register(input: RegisterDto): Promise<{ email: string; otp
     password: passwordHash,
     name: input.name,
     role: input.role,
-    shopName: input.shopName,
+    // Phone is OPTIONAL. Frontend (seller signup) sends it in E.164 format
+    // ("+919876543210"). Customer signup currently doesn't collect it; nullable
+    // column in schema makes this safe either way. phoneVerified stays NULL
+    // until a future SMS-OTP flow sets it (separate endpoint).
+    phone: input.phone,
+    // shopName intentionally NOT passed - vendor_profile created in setup-shop
   });
 
   // ----- OTP email send - GRACEFUL on failure -----
@@ -175,6 +181,7 @@ export async function resendOtp(input: ResendOtpDto): Promise<{ otpSent: boolean
 export async function login(
   input: LoginDto,
   context: { ip: string | null; ua?: string | null; fingerprint?: string },
+  scope: AuthScope = "customer",
 ): Promise<AuthResponseDto & { sid: string }> {
   assertRequired(input, ["email", "password"]);
 
@@ -198,9 +205,12 @@ export async function login(
   // Audit trail - last login tracking
   await authRepo.updateLastLogin(user.id, context.ip);
 
+  // Scope param chooses which JWT secret family signs the tokens. Seller
+  // login → seller secrets, customer login → customer secrets.
   const { accessToken, refreshToken, sid } = await tokens.createSession(
     { id: user.id, email: user.email, role: user.role },
     { ip: context.ip, ua: context.ua ?? null, fingerprint: context.fingerprint },
+    scope,
   );
 
   logger.info({ userId: user.id, ip: context.ip, sid }, "User logged in");
@@ -215,15 +225,20 @@ export async function login(
 // ============================================================================
 // REFRESH (token rotation - OWASP)
 // ============================================================================
+import type { AuthScope } from "../../utils/cookies.js";
+
 export async function refreshTokens(
   refreshToken: string,
   context: { ip?: string | null; ua?: string | null; fingerprint?: string } = {},
+  scope: AuthScope = "customer",
 ): Promise<AuthResponseDto & { sid: string }> {
   if (!refreshToken) {
     throw new BadRequestError("Refresh token is required");
   }
 
-  const payload = tokens.verifyRefreshToken(refreshToken);
+  // Verify with the scope's secret — seller refresh tokens are signed with
+  // JWT_SELLER_REFRESH_SECRET and cannot be verified with the customer key.
+  const payload = tokens.verifyRefreshToken(refreshToken, scope);
 
   // validateRefreshSession does: hash compare + replay detect + binding check
   // Throws SessionRevokedError on any anomaly (and revokes-all on theft signals)
@@ -244,6 +259,7 @@ export async function refreshTokens(
     payload.sid,
     refreshToken,
     { fingerprint: context.fingerprint },
+    scope,
   );
 
   return {
@@ -366,4 +382,75 @@ export async function resetPassword(input: ResetPasswordDto): Promise<void> {
   await tokens.revokeAllSessions(user.id);
 
   logger.info({ userId: user.id }, "Password reset via OTP - all sessions revoked");
+}
+
+// ============================================================================
+// SEND PHONE OTP - authenticated (SMS verification)
+// ============================================================================
+// Flow:
+//   1. Resolve the target phone — body.phone (set/change) OR the one on file
+//   2. If changing: enforce E.164 uniqueness, persist (resets phoneVerified)
+//   3. Short-circuit if already verified (no wasted SMS)
+//   4. Send OTP via SMS (rate-limited by the shared OTP machinery)
+// Returns the (masked) phone so the UI can show "code sent to •••••3210".
+// ============================================================================
+export async function sendPhoneOtp(
+  userId: string,
+  input: SendPhoneOtpDto,
+): Promise<{ phone: string; otpSent: boolean }> {
+  if (!userId) throw new BadRequestError("Invalid session");
+
+  const user = await authRepo.findUserByIdSafe(userId);
+  if (!user) throw new NotFoundError("User");
+
+  // Determine the phone to verify
+  let phone = input.phone ?? user.phone ?? null;
+  if (!phone) {
+    throw new BadRequestError(
+      "No phone number on file. Provide a phone number to verify.",
+    );
+  }
+
+  // Changing/setting a new number → uniqueness check + persist (unverifies it)
+  const isChanging = input.phone && input.phone !== user.phone;
+  if (isChanging) {
+    if (await authRepo.phoneExists(input.phone!, userId)) {
+      throw new BadRequestError("This phone number is already in use");
+    }
+    await authRepo.updateUserPhone(userId, input.phone!);
+    phone = input.phone!;
+  } else if (user.phoneVerified) {
+    // Already verified the number on file - nothing to do (idempotent UX)
+    return { phone, otpSent: false };
+  }
+
+  await authHelper.sendOtpSms({ phone, purpose: "verification" });
+  return { phone, otpSent: true };
+}
+
+// ============================================================================
+// VERIFY PHONE OTP - authenticated
+// ============================================================================
+// Verifies the code against the user's CURRENT phone, then stamps
+// phoneVerified. Brute-force protection inherited from the OTP core.
+// ============================================================================
+export async function verifyPhoneOtpForUser(
+  userId: string,
+  input: VerifyPhoneOtpDto,
+): Promise<{ phoneVerified: boolean }> {
+  if (!userId) throw new BadRequestError("Invalid session");
+
+  const user = await authRepo.findUserByIdSafe(userId);
+  if (!user) throw new NotFoundError("User");
+  if (!user.phone) {
+    throw new BadRequestError("No phone number to verify");
+  }
+
+  // Throws on wrong/expired/locked; consumes OTP on success
+  await authHelper.verifyPhoneOtp(user.phone, input.otp);
+
+  await authRepo.markPhoneVerified(userId);
+  logger.info({ userId }, "Phone verified via SMS OTP");
+
+  return { phoneVerified: true };
 }

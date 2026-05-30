@@ -93,6 +93,7 @@ export async function createUser(data: {
   password: string;
   name: string;
   role: UserRole;
+  phone?: string; // E.164 format, e.g. "+919876543210"
   shopName?: string; // VENDOR only
 }) {
   return prisma.$transaction(async (tx) => {
@@ -102,12 +103,19 @@ export async function createUser(data: {
         password: data.password,
         name: data.name,
         role: data.role,
-        // New user → PENDING_VERIFICATION until email verified
+        // Phone is OPTIONAL on User but @unique - skip writing empty/null so
+        // multiple users without phone don't collide on the unique index.
+        // (Postgres treats multiple nulls as distinct, but being explicit
+        // here avoids `undefined` surprise on Prisma's side.)
+        ...(data.phone ? { phone: data.phone } : {}),
+        // New user → PENDING_VERIFICATION until email verified.
+        // phoneVerified intentionally NULL — SMS OTP flow can set it later.
         status: "PENDING_VERIFICATION",
       },
       select: {
         id: true,
         email: true,
+        phone: true,
         name: true,
         role: true,
         status: true,
@@ -121,13 +129,18 @@ export async function createUser(data: {
       });
     }
 
-    if (data.role === "VENDOR") {
-      const shopName = data.shopName ?? `${data.name}'s Shop`;
+    // VENDOR role: vendor_profile NOT created here. Seller onboarding flow
+    // creates it in step 2 (POST /vendors/setup-shop) - matches Amazon Seller
+    // Central / Flipkart Seller Hub / Shopify Partners pattern.
+    //
+    // Backward-compatible escape hatch: if shopName was explicitly provided
+    // (legacy callers / seed scripts / direct admin create), still create it.
+    if (data.role === "VENDOR" && data.shopName) {
       await tx.vendorProfile.create({
         data: {
           userId: user.id,
-          shopName,
-          shopSlug: slugify(`${shopName}-${user.id.slice(-6)}`),
+          shopName: data.shopName,
+          shopSlug: slugify(`${data.shopName}-${user.id.slice(-6)}`),
           status: "PENDING_REVIEW",
         },
       });
@@ -149,6 +162,43 @@ export async function markEmailVerified(userId: string) {
       status: "ACTIVE",
     },
     select: { id: true, status: true },
+  });
+}
+
+// ============================================================================
+// Phone verification helpers
+// ============================================================================
+// phoneExists - is this E.164 number already on ANOTHER user? (unique index)
+// excludeUserId lets the same user re-verify their own number without a clash.
+export async function phoneExists(
+  phone: string,
+  excludeUserId?: string,
+): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { phone },
+    select: { id: true },
+  });
+  if (!user) return false;
+  return excludeUserId ? user.id !== excludeUserId : true;
+}
+
+// updateUserPhone - set/replace a user's phone (resets phoneVerified to NULL
+// since the new number is unverified until OTP succeeds).
+export async function updateUserPhone(userId: string, phone: string) {
+  return prisma.user.update({
+    where: { id: userId },
+    data: { phone, phoneVerified: null },
+    select: { id: true, phone: true },
+  });
+}
+
+// markPhoneVerified - stamp phoneVerified after successful SMS OTP.
+// Does NOT touch `status` (email verification owns the PENDING→ACTIVE flip).
+export async function markPhoneVerified(userId: string) {
+  return prisma.user.update({
+    where: { id: userId },
+    data: { phoneVerified: new Date() },
+    select: { id: true, phoneVerified: true },
   });
 }
 

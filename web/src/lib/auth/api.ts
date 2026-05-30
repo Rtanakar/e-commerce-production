@@ -49,7 +49,8 @@ export const authApi = {
     email: string;
     password: string;
     role?: "CUSTOMER" | "VENDOR";
-    shopName?: string;
+    phone?: string;
+    country?: string;
   }) =>
     api.post<{ email: string; otpSent: boolean; message?: string }>(
       "/auth/register",

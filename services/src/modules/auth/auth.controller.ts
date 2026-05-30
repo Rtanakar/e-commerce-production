@@ -32,7 +32,19 @@ import type {
   ForgotPasswordDto,
   ResetPasswordDto,
   AuthResponseDto,
+  SendPhoneOtpDto,
+  VerifyPhoneOtpDto,
 } from "./auth.validator.js";
+
+// ============================================================================
+// maskPhone - "+919876543210" → "+91•••••3210" (never echo full number)
+// ============================================================================
+function maskPhone(phone: string): string {
+  if (phone.length <= 4) return phone;
+  const last4 = phone.slice(-4);
+  const head = phone.slice(0, Math.min(3, phone.length - 4));
+  return `${head}${"•".repeat(Math.max(3, phone.length - 7))}${last4}`;
+}
 
 // ============================================================================
 // Internal helper - send auth response (cookie + body) consistently
@@ -204,6 +216,49 @@ export async function changePassword(req: Request, res: Response): Promise<void>
   res.status(HttpStatus.OK).json({
     ...ApiResponseBuilder.success({
       message: "Password changed successfully, all sessions revoked",
+    }),
+    requestId: req.id,
+  });
+}
+
+// ============================================================================
+// POST /phone/send-otp - authenticated (works on either cookie jar)
+// ============================================================================
+// Scope-agnostic: only uses req.user.sub. Mounted in BOTH auth.routes
+// (customer jar) and seller-auth.routes (seller jar) with the matching CSRF
+// + auth middleware. Same handler, no cookie writes → safe to share.
+// ============================================================================
+export async function sendPhoneOtp(req: Request, res: Response): Promise<void> {
+  if (!req.user) throw new UnauthorizedError();
+  const result = await authService.sendPhoneOtp(
+    req.user.sub,
+    req.body as SendPhoneOtpDto,
+  );
+  res.status(HttpStatus.OK).json({
+    ...ApiResponseBuilder.success({
+      phone: maskPhone(result.phone),
+      otpSent: result.otpSent,
+      message: result.otpSent
+        ? "Verification code sent to your phone."
+        : "Your phone is already verified.",
+    }),
+    requestId: req.id,
+  });
+}
+
+// ============================================================================
+// POST /phone/verify - authenticated (works on either cookie jar)
+// ============================================================================
+export async function verifyPhoneOtp(req: Request, res: Response): Promise<void> {
+  if (!req.user) throw new UnauthorizedError();
+  const result = await authService.verifyPhoneOtpForUser(
+    req.user.sub,
+    req.body as VerifyPhoneOtpDto,
+  );
+  res.status(HttpStatus.OK).json({
+    ...ApiResponseBuilder.success({
+      ...result,
+      message: "Phone number verified successfully.",
     }),
     requestId: req.id,
   });

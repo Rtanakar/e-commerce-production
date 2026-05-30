@@ -6,6 +6,7 @@
 // ============================================================================
 
 import type { JwtPayload } from "../modules/auth/auth.validator.js";
+import type { AuthScope } from "../utils/cookies.js";
 import type { Logger } from "pino";
 
 declare global {
@@ -15,6 +16,9 @@ declare global {
       id: string;
       // Authenticated user payload - requireAuth middleware se set
       user?: JwtPayload;
+      // Which cookie jar authenticated this request - "customer" (default)
+      // or "seller". Controllers read this to emit the right cookie names.
+      authScope?: AuthScope;
       // Per-request scoped logger - request-id auto-attached
       log: Logger;
       // Response time tracking - response-time middleware se set

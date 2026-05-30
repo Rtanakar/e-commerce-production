@@ -29,6 +29,34 @@ import { redis, RedisKeys } from "./redis.js";
 import { InvalidTokenError, SessionRevokedError } from "../utils/errors.js";
 import { jwtPayloadSchema, type JwtPayload } from "../modules/auth/auth.validator.js";
 import { logger } from "../utils/logger.js";
+import type { AuthScope } from "../utils/cookies.js";
+
+// ============================================================================
+// Scope-aware secret resolution
+// ============================================================================
+// Customer scope → JWT_ACCESS_SECRET / JWT_REFRESH_SECRET
+// Seller scope   → JWT_SELLER_ACCESS_SECRET / JWT_SELLER_REFRESH_SECRET
+//                   (falls back to customer secrets if not configured —
+//                    convenient for dev, NOT recommended for prod)
+//
+// Different signing keys = full cryptographic isolation. If the customer
+// JWT secret leaks, attacker still can't forge seller tokens (and vice
+// versa). Industry: Stripe Connect uses separate signing key family for
+// account-scope vs platform-scope tokens.
+// ============================================================================
+function accessSecret(scope: AuthScope): string {
+  if (scope === "seller" && env.JWT_SELLER_ACCESS_SECRET) {
+    return env.JWT_SELLER_ACCESS_SECRET;
+  }
+  return env.JWT_ACCESS_SECRET;
+}
+
+function refreshSecret(scope: AuthScope): string {
+  if (scope === "seller" && env.JWT_SELLER_REFRESH_SECRET) {
+    return env.JWT_SELLER_REFRESH_SECRET;
+  }
+  return env.JWT_REFRESH_SECRET;
+}
 
 // ============================================================================
 // Constants - JWT standard claims
@@ -76,7 +104,10 @@ function newJti(): string {
 // Access token carries `jti` for revocation list lookup.
 // Refresh token carries only `sid` - rotation lookup happens by sid.
 // ============================================================================
-function signAccess(payload: JwtPayload & { jti: string }): string {
+function signAccess(
+  payload: JwtPayload & { jti: string },
+  scope: AuthScope = "customer",
+): string {
   const { jti, ...rest } = payload;
   const opts: SignOptions = {
     expiresIn: env.JWT_ACCESS_EXPIRES_IN as SignOptions["expiresIn"],
@@ -84,24 +115,30 @@ function signAccess(payload: JwtPayload & { jti: string }): string {
     audience: ACCESS_AUDIENCE,
     jwtid: jti,
   };
-  return jwt.sign(rest, env.JWT_ACCESS_SECRET, opts);
+  return jwt.sign(rest, accessSecret(scope), opts);
 }
 
-function signRefresh(payload: JwtPayload): string {
+function signRefresh(
+  payload: JwtPayload,
+  scope: AuthScope = "customer",
+): string {
   const opts: SignOptions = {
     expiresIn: env.JWT_REFRESH_EXPIRES_IN as SignOptions["expiresIn"],
     issuer: ISSUER,
     audience: REFRESH_AUDIENCE,
   };
-  return jwt.sign(payload, env.JWT_REFRESH_SECRET, opts);
+  return jwt.sign(payload, refreshSecret(scope), opts);
 }
 
 // ============================================================================
 // Verify tokens (public)
 // ============================================================================
-export function verifyAccessToken(token: string): JwtPayload {
+export function verifyAccessToken(
+  token: string,
+  scope: AuthScope = "customer",
+): JwtPayload {
   try {
-    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET, {
+    const decoded = jwt.verify(token, accessSecret(scope), {
       issuer: ISSUER,
       audience: ACCESS_AUDIENCE,
     }) as RawJwt;
@@ -113,9 +150,12 @@ export function verifyAccessToken(token: string): JwtPayload {
   }
 }
 
-export function verifyRefreshToken(token: string): JwtPayload {
+export function verifyRefreshToken(
+  token: string,
+  scope: AuthScope = "customer",
+): JwtPayload {
   try {
-    const decoded = jwt.verify(token, env.JWT_REFRESH_SECRET, {
+    const decoded = jwt.verify(token, refreshSecret(scope), {
       issuer: ISSUER,
       audience: REFRESH_AUDIENCE,
     }) as RawJwt;
@@ -147,6 +187,7 @@ export async function isAccessJtiRevoked(jti: string | undefined): Promise<boole
 export async function createSession(
   user: { id: string; email: string; role: "CUSTOMER" | "VENDOR" | "ADMIN" },
   ctx: SessionContext = {},
+  scope: AuthScope = "customer",
 ): Promise<{ accessToken: string; refreshToken: string; sid: string }> {
   const sid = newSid();
   const jti = newJti();
@@ -159,8 +200,10 @@ export async function createSession(
     sid,
   };
 
-  const accessToken = signAccess({ ...payload, jti });
-  const refreshToken = signRefresh(payload);
+  // Sign with scope-specific secrets (seller-signed tokens cannot be verified
+  // with customer secret and vice versa - cryptographic isolation).
+  const accessToken = signAccess({ ...payload, jti }, scope);
+  const refreshToken = signRefresh(payload, scope);
   const refreshHash = sha256(refreshToken);
 
   const ttl = parseExpiryToSeconds(env.JWT_REFRESH_EXPIRES_IN);
@@ -283,6 +326,7 @@ export async function rotateSession(
   // ctx accepted for symmetry with createSession - reserved for future use
   // (e.g. updating lastUsedIp). Fingerprint stays bound to first-seen device.
   _ctx: SessionContext = {},
+  scope: AuthScope = "customer",
 ): Promise<{ accessToken: string; refreshToken: string; sid: string }> {
   const oldMeta = await getSessionMeta(user.id, oldSid);
   // Should not happen (validateRefreshSession already checked) but be defensive
@@ -303,8 +347,8 @@ export async function rotateSession(
     role: user.role,
     sid: oldSid,
   };
-  const accessToken = signAccess({ ...payload, jti: newJti });
-  const refreshToken = signRefresh(payload);
+  const accessToken = signAccess({ ...payload, jti: newJti }, scope);
+  const refreshToken = signRefresh(payload, scope);
   const newHash = sha256(refreshToken);
 
   const ttl = parseExpiryToSeconds(env.JWT_REFRESH_EXPIRES_IN);

@@ -48,6 +48,8 @@ import { HttpStatus } from "./utils/http-status.js";
 
 // ─── Feature modules ───
 import authRoutes from "./modules/auth/auth.routes.js";
+import sellerAuthRoutes from "./modules/auth/seller-auth.routes.js";
+import vendorRoutes from "./modules/vendor/vendor.routes.js";
 import healthRoutes from "./modules/health/health.routes.js";
 import docsRoutes from "./modules/docs/docs.routes.js";
 
@@ -240,6 +242,23 @@ if (env.NODE_ENV !== "production" || process.env["ENABLE_DOCS"] === "true") {
 // http://localhost:8080/api/v1/auth/forgot-password
 // http://localhost:8080/api/v1/auth/reset-password
 app.use(`${apiBase}/auth`, authRoutes);
+
+// ----- Seller auth module (Amazon Seller Central style isolation) -----
+// http://localhost:8080/api/v1/auth/seller/register
+// http://localhost:8080/api/v1/auth/seller/login
+// http://localhost:8080/api/v1/auth/seller/verify-otp
+// http://localhost:8080/api/v1/auth/seller/resend-otp
+// http://localhost:8080/api/v1/auth/seller/refresh
+// http://localhost:8080/api/v1/auth/seller/logout
+// http://localhost:8080/api/v1/auth/seller/me
+// Cookie jar: s_at / s_rt / s_csrf - fully separate from customer at/rt/csrf
+app.use(`${apiBase}/auth/seller`, sellerAuthRoutes);
+
+// ----- Vendor / Seller onboarding module -----
+// Step 2: POST /api/v1/vendors/setup-shop
+// Step 3: POST /api/v1/vendors/connect-bank
+// Status: GET  /api/v1/vendors/onboarding-status
+app.use(`${apiBase}/vendors`, vendorRoutes);
 
 // ----- FUTURE MODULES (uncomment as they are built) -----
 // app.use(`${apiBase}/users`,         userRoutes);

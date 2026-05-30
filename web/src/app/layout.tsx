@@ -1,12 +1,23 @@
+// ============================================================================
+// Root layout - global providers ONLY (no UI chrome)
+// ============================================================================
+// Per-area chrome lives in route-group layouts:
+//   (shop)/layout.tsx    → customer SiteHeader + CategoryBar
+//   (seller)/layout.tsx  → minimal seller portal header
+//   (auth)/layout.tsx    → centered auth card (own logo bar)
+//
+// This separation matches how nx monorepos isolate distinct apps - same code
+// base, completely independent UIs per audience.
+// ============================================================================
+
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
+import { NuqsAdapter } from "nuqs/adapters/next/app";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { QueryProvider } from "@/lib/providers/query-provider";
 import { ThemeProvider } from "@/lib/providers/theme-provider";
-// import { Toaster } from "@/components/ui/sonner";
-import { SiteHeader } from "@/components/shared/site-header";
-import { Toaster } from "sonner";
+import { Toaster } from "@/components/ui/sonner";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -26,8 +37,6 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      // suppressHydrationWarning required - next-themes injects `.dark` class
-      // before React hydrates, causing a controlled mismatch that's expected
       suppressHydrationWarning
       className={cn(
         "h-full antialiased font-sans",
@@ -37,37 +46,13 @@ export default function RootLayout({
       )}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
-        {/* Provider order: Theme (innermost class-on-html) → Query (data) */}
         <ThemeProvider>
           <QueryProvider>
-            <SiteHeader />
-            {children}
+            <NuqsAdapter>
+              {children}
+              <Toaster />
+            </NuqsAdapter>
           </QueryProvider>
-
-          {/* <Toaster /> */}
-          <Toaster
-            position="bottom-right"
-            closeButton
-            duration={4500}
-            toastOptions={{
-              unstyled: false,
-              classNames: {
-                toast:
-                  "!bg-[#181312] !border !border-[#FFFFFF1A] !text-[#FFF7EC] !shadow-[0_8px_32px_rgba(0,0,0,0.45)] !rounded-xl",
-                title: "!text-[#FFF7EC] !font-semibold",
-                description: "!text-[#FFF7EC]/70",
-                actionButton: "!bg-[#FF5A1F] !text-[#0E0A07]",
-                cancelButton: "!bg-[#FFF7EC]/10 !text-[#FFF7EC]",
-                closeButton:
-                  "!bg-[#181312] !border !border-[#FFFFFF1A] !text-[#FFF7EC]",
-                success: "!border-[#1F7A3A]/40",
-                error: "!border-[#B3321B]/50",
-              },
-              style: {
-                fontFamily: "var(--font-sans)",
-              },
-            }}
-          />
         </ThemeProvider>
       </body>
     </html>
