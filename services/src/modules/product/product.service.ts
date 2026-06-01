@@ -30,6 +30,9 @@ import type {
 
 type AuthUser = { id: string; role: string };
 
+// Soft-delete recovery window — DELETE ke 24h baad purge cron permanent hata deta.
+const DELETE_RETENTION_MS = 24 * 60 * 60 * 1000;
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -309,6 +312,8 @@ export async function createProduct(input: CreateProductDto, userId: string) {
     bannerUrl: input.bannerUrl,
     status: input.status,
     publishedAt: input.status === "ACTIVE" ? new Date() : null,
+    eventStartsAt: input.eventStartsAt ?? null,
+    eventEndsAt: input.eventEndsAt ?? null,
     metaTitle: input.metaTitle,
     metaDescription: input.metaDescription,
     // Nested gallery images (product-level)
@@ -373,7 +378,7 @@ export async function updateProduct(id: string, input: UpdateProductDto, user: A
   }
 
   // publishedAt — DRAFT se pehli baar public hone pe set, dobara reset nahi
-  const goingPublic = !existing.publishedAt && input.status && input.status !== "DRAFT";
+  const goingPublic = !existing.publishedAt && input.status === "ACTIVE";
 
   const data: Prisma.ProductUpdateInput = {
     slug,
@@ -408,6 +413,8 @@ export async function updateProduct(id: string, input: UpdateProductDto, user: A
     ...(input.bannerUrl !== undefined && { bannerUrl: input.bannerUrl }),
     ...(input.status !== undefined && { status: input.status }),
     ...(goingPublic && { publishedAt: new Date() }),
+    ...(input.eventStartsAt !== undefined && { eventStartsAt: input.eventStartsAt }),
+    ...(input.eventEndsAt !== undefined && { eventEndsAt: input.eventEndsAt }),
     ...(input.metaTitle !== undefined && { metaTitle: input.metaTitle }),
     ...(input.metaDescription !== undefined && {
       metaDescription: input.metaDescription,
@@ -439,48 +446,77 @@ export async function updateProduct(id: string, input: UpdateProductDto, user: A
 }
 
 // ============================================================================
-// ARCHIVE - soft delete (status=ARCHIVED + deletedAt). Restore reversible.
+// ARCHIVE - listing se hide (permanent tak rehta, restore ho sakta)
+// ============================================================================
+// Archive = "shelf se hata do" — DELETE se alag (koi 24h purge nahi).
 // ============================================================================
 export async function archiveProduct(id: string, user: AuthUser) {
   const existing = await ensureOwnership(id, user);
   if (existing.status === "ARCHIVED") {
     throw new BadRequestError("Product is already archived");
   }
-  return productRepo.update(id, { status: "ARCHIVED", deletedAt: new Date() });
+  // deletedAt/purgeAt clear — taaki agar DELETED se aaya ho to purge cancel ho jaaye
+  return productRepo.update(id, { status: "ARCHIVED", deletedAt: null, purgeAt: null });
 }
 
 // ============================================================================
-// RESTORE - ARCHIVED → DRAFT (owner re-publish kare explicitly)
+// SOFT DELETE - "Delete" button → DELETED state + 24h recovery window
+// ============================================================================
+// Turant hard delete NAHI. status=DELETED, deletedAt=now, purgeAt=now+24h.
+// 24h ke andar restore ho sakta; warna purge cron DB + R2 se permanent hata dega.
+// ============================================================================
+export async function softDeleteProduct(id: string, user: AuthUser) {
+  const existing = await ensureOwnership(id, user);
+  if (existing.status === "DELETED") {
+    throw new BadRequestError("Product is already in delete state");
+  }
+  const now = new Date();
+  const purgeAt = new Date(now.getTime() + DELETE_RETENTION_MS);
+  return productRepo.update(id, { status: "DELETED", deletedAt: now, purgeAt });
+}
+
+// ============================================================================
+// RESTORE - ARCHIVED ya DELETED → DRAFT (recovery)
+// ============================================================================
+// Dono jagah kaam karta hai. deletedAt/purgeAt null → purge cron skip kar dega.
+// Seller chahe to phir explicitly publish (status ACTIVE) kare.
 // ============================================================================
 export async function restoreProduct(id: string, user: AuthUser) {
   const existing = await ensureOwnership(id, user);
-  if (existing.status !== "ARCHIVED") {
-    throw new BadRequestError("Product is not archived");
+  if (existing.status !== "ARCHIVED" && existing.status !== "DELETED") {
+    throw new BadRequestError("Only archived or deleted products can be restored");
   }
-  return productRepo.update(id, { status: "DRAFT", deletedAt: null });
+  return productRepo.update(id, { status: "DRAFT", deletedAt: null, purgeAt: null });
 }
 
 // ============================================================================
-// DELETE - hard delete + R2/S3 media cleanup (owner/admin)
+// PURGE - permanent hard delete + R2/S3 media cleanup (purge cron / internal)
 // ============================================================================
-// Order: keys collect (row chahiye) → DB delete → best-effort storage cleanup.
-// DB source of truth — storage partial fail pe bhi API success (orphan objects
+// NO auth check — sirf purge worker call karta hai (DELETED + purgeAt expired).
+// Order: keys collect → DB delete → best-effort storage cleanup.
+// DB source of truth — storage partial fail pe bhi continue (orphan objects
 // ops sweep ka kaam, row zinda rakhne se behtar).
 // ============================================================================
-export async function deleteProduct(id: string, user: AuthUser) {
-  const existing = await ensureOwnership(id, user);
-  const keys = extractProductKeys(existing);
+export async function purgeExpiredProducts(): Promise<number> {
+  const due = await productRepo.findDueForPurge(new Date());
+  if (due.length === 0) return 0;
 
-  await productRepo.remove(id);
+  for (const p of due) {
+    const keys = extractProductKeys(p);
+    await productRepo.remove(p.id);
 
-  if (keys.length > 0) {
-    try {
-      await deleteObjects(keys);
-      logger.info({ productId: id, count: keys.length }, "[products] media cleanup done");
-    } catch (err) {
-      logger.warn({ err, productId: id }, "[products] media cleanup failed (continuing)");
+    if (keys.length > 0) {
+      try {
+        await deleteObjects(keys);
+        logger.info({ productId: p.id, count: keys.length }, "[products] purge media cleanup done");
+      } catch (err) {
+        logger.warn({ err, productId: p.id }, "[products] purge media cleanup failed (continuing)");
+      }
     }
   }
+
+  logger.info({ count: due.length }, "[products] expired products purged");
+  return due.length;
 }
 
 // ============================================================================

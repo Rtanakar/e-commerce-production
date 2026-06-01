@@ -28,6 +28,8 @@ const CARD_SELECT = {
   ratingCount: true,
   soldCount: true,
   createdAt: true,
+  deletedAt: true, // soft-delete timestamp — frontend "Deleted" badge
+  purgeAt: true, // 24h purge deadline — frontend countdown ("23h left")
   // primary image — isPrimary pehle, fir position; sirf ek card ke liye
   images: {
     orderBy: [{ isPrimary: "desc" }, { position: "asc" }],
@@ -189,6 +191,27 @@ export async function setDiscountCodes(productId: string, codeIds: string[]) {
 // ============================================================================
 export async function remove(id: string) {
   return prisma.product.delete({ where: { id } });
+}
+
+// ============================================================================
+// findDueForPurge - soft-deleted products jinka 24h window khatam (purge cron)
+// ============================================================================
+// status=DELETED + purgeAt <= now. Media keys saath laate hain taaki R2/S3
+// cleanup ho sake (extractProductKeys ke liye same shape jaisa findByIdLight).
+// ============================================================================
+export async function findDueForPurge(now: Date, take = 100) {
+  return prisma.product.findMany({
+    where: { status: "DELETED", purgeAt: { not: null, lte: now } },
+    take,
+    select: {
+      id: true,
+      bannerUrl: true,
+      videoUrl: true,
+      description: true,
+      images: { select: { key: true, url: true } },
+      variants: { select: { images: { select: { key: true, url: true } } } },
+    },
+  });
 }
 
 // ============================================================================

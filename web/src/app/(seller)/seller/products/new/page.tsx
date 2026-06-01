@@ -1,12 +1,22 @@
-import { SquarePlus } from "lucide-react";
-import { ComingSoon } from "@/features/seller/dashboard/components/coming-soon";
+// ============================================================================
+// /seller/products/new — create product page
+// ============================================================================
 
-export default function SellerCreateProductPage() {
+import { ErrorBoundary } from "react-error-boundary";
+import {
+  CreateProductContainer,
+  CreateProductContent,
+  CreateProductError,
+} from "@/features/products/views/create-product-view";
+
+export const metadata = { title: "Create product" };
+
+export default function NewProductPage() {
   return (
-    <ComingSoon
-      title="Create Product"
-      icon={SquarePlus}
-      description="Add a new product with images, pricing, and stock."
-    />
+    <CreateProductContainer>
+      <ErrorBoundary fallback={<CreateProductError />}>
+        <CreateProductContent />
+      </ErrorBoundary>
+    </CreateProductContainer>
   );
 }

@@ -811,3 +811,397 @@ storage ke kaam karega).
    auto OUT_OF_STOCK jab stock 0.
 4. Carried over: prod cookie domains, OAuth+proxy, Stripe Connect, Twilio creds,
    customer-side phone verify UI, pre-existing tsc noise.
+
+---
+
+### Session 10 — 2026-05-30 (Product FRONTEND — create/edit forms, TipTap, uploaders, list, dashboard charts)
+
+Pura seller product frontend banaya — course module ka 4-export composition
+pattern (Container/Loading/Error/Content), RHF + Zod, **theme-aware shadcn
+tokens** (hardcoded orange NAHI — light+dark adapt), motion animations. Sab tsc
+clean (sirf pre-existing calendar.tsx noise).
+
+#### Foundation (`features/products/`)
+- `types.ts` — Product/Variant/Image/Category/Discount + list/detail responses.
+- `validators/product-validator.ts` — Zod create/update + slugify. **Form me
+  RUPEES, API me minor units (paise)** — mappers convert.
+- `lib/product-mappers.ts` — formToCreatePayload / formToUpdatePayload (dirty-only
+  PATCH) / detailToFormValues (paise↔rupees).
+- `api/products-api.ts` + `api/product-keys.ts` — sellerHttp CRUD (products/
+  categories/discounts). `sellerHttp` me `patch`/`del` add kiye.
+- `config/constants.ts` (web) — PAGINATION/STALE_TIME/CATALOG/SIZE_OPTIONS/COLORS.
+- `lib/upload-media.ts` — `uploadImage` (multipart → /uploads/image sharp
+  optimize), `uploadVideo`/`uploadFile` (presign → R2 PUT), `deleteMedia`.
+
+#### Hooks (TanStack Query + nuqs)
+- `use-products` — nuqs URL state + 400ms debounced search + keepPreviousData +
+  filter/pagination helpers. `use-product-mutations` (create/update/archive/
+  restore/delete + useProduct). `use-categories`, `use-discounts`,
+  `use-product-analytics` (category + status distribution via useQueries fan-out).
+- `server/params-loader.ts` + `use-product-params` — nuqs SSOT.
+
+#### Components (theme-aware + motion)
+- `form-fields.tsx` — Text/Number/Price/Textarea/Select/Switch (RHF Controller).
+- `product-form-bits.tsx` — SectionCard, TagListInput (motion chips), SizeSelector,
+  ColorPicker (swatches + custom popover), SpecificationsInput.
+- `media-uploader.tsx` — **ProductImagesUploader** (drag-drop + file table:
+  order/name/size/thumb/primary★/delete), **SingleImageUploader** (banner),
+  **VideoUploader**. Upload → sonner promise toast.
+- `variant-manager.tsx` — **"Edit your variant" shadcn Dialog** (title, color bar,
+  tags, image gallery, stock/sku, Delete/Update) + variant list.
+- `category-selects.tsx` (category→subcategory cascade), `discount-selector.tsx`
+  (multi-select chips), `products-search.tsx` (search + status/category/sort
+  filters, animated panel), `products-stats.tsx` (4 KPI cards, count queries),
+  `products-table.tsx` (skeleton + row actions + delete dialog + empty state).
+- `components/shared/pagination-controls.tsx` (NEW) — numbered + prev/next.
+
+#### TipTap editor (`components/editor/`)
+- `image-with-key.ts` (data-r2-key for cleanup), `video-node.tsx` (React NodeView
+  + remove btn), `editor-toolbar.tsx` (sticky: history/headings/marks/lists/quote/
+  link/image+video upload + status pill), `product-description-editor.tsx`
+  (StarterKit + Underline/Link + TaskList + TextStyle/Color + bubble menu +
+  external-value sync for edit). **description = HTML string** (JSON nahi).
+
+#### Views + pages
+- `create-product-view.tsx` (Save Draft / Create buttons), `edit-product-view.tsx`
+  (fetch → map → dirty PATCH + archive/restore/delete dropdown + Loading/Error).
+- `products-list-view.tsx` (stats + search + table + pagination).
+- Wired: `/seller/products` (list, Suspense for nuqs), `/seller/products/new`,
+  `/seller/products/[id]/edit`.
+
+#### Dashboard charts (recharts + shadcn chart)
+- `analytics-charts.tsx` — **CategoryPieChart** (products by category, donut) +
+  **StatusBarChart** (products by status). Skeleton + empty states, theme chart
+  vars (--chart-1..5). `dashboard-view.tsx` me wire kiye (+ real ProductsStats);
+  AiInsightsPanel mock hata diya.
+
+**Notes / decisions:**
+- Dual zod (v3+v4 in tree) → `zodResolver` types mismatch → `as never` arg cast
+  + `as Resolver<...>` result cast (runtime fine, resolvers v5 supports zod 4).
+- Client-side TanStack Query + skeletons (project pattern; no HydrateClient infra).
+
+**⚠️ Test karne se pehle:**
+1. `.env` me R2 creds (warna image upload fail — baaki sab chalega).
+2. **Categories seed karo** — create form ka category dropdown khali rahega warna
+   (admin POST /categories ya seed). Bina category product create nahi hoga.
+
+**Open / next session:**
+1. **Category seed** + admin category management UI.
+2. **Discount Codes management page** (`/seller/discount-codes`) — create/edit/
+   delete codes (backend + selector ready, sirf management UI baaki).
+3. **Public storefront** product listing/detail pages.
+4. Carried over: orders/inventory, prod cookie domains, Stripe Connect, etc.
+
+---
+
+### Session 11 — 2026-05-30 (Full TipTap features + UI polish)
+
+User feedback addressed:
+- **Full Notion-grade TipTap** (course reference ke saare features), theme-aware:
+  - `editor/colors.ts` (text-color palette), `file-chip-node.ts` (inline PDF/doc
+    chip), `cleanup-extension.ts` (node remove → R2 deleteMediaBulk),
+    `slash-command-items.ts` + `slash-command-menu.tsx` + `slash-command.ts`
+    (`/` menu, grouped, keyboard-nav, portal), `block-handle.tsx` (drag +
+    "add block"), `bubble-menu-content.tsx` (heading dropdown + marks + link +
+    color picker + clear), `editor-toc.tsx` (heading outline sidebar).
+  - `editor-toolbar.tsx` — file upload button add kiya ("image"|"video"|"file").
+  - `product-description-editor.tsx` rewrite — sab compose: StarterKit + Underline/
+    Link + TaskList + TextStyle/Color + Image/Video/FileChip + SlashCommand +
+    CleanupExtension + BlockHandle + BubbleMenu + TOC + image/video/file upload.
+  - `app/globals.css` — `.tt-editor`/`.tt-content`/`.tt-*` typography styles
+    **theme-aware** (shadcn CSS vars + color-mix, light+dark adapt) — headings,
+    lists, blockquote, code, task list, file chip, links, images, video.
+- **Dashboard header height** h-14 → **h-16** (sidebar header bhi h-16 align).
+- **Banner uploader** aspect 16/6 → 16/4 (kam tall, screenshot feedback).
+- **nuqs clarified** — already wired: `NuqsAdapter` (root layout) + `useQueryStates`
+  (useProductParams) → use-products me search/status/category/sort/page sab URL
+  me sync. Create/edit forms ko URL state ki zaroorat nahi (RHF).
+
+All tsc clean (only pre-existing calendar.tsx noise). Create + Edit forms shared
+`ProductFormBody` (DRY, course pattern).
+
+---
+
+### Session 12 — 2026-05-30 (Server nuqs prefetch + scroll fix + single-file form)
+
+3 feedback items:
+1. **Server-side nuqs `searchParams` + prefetch** (course /dashboard/courses pattern):
+   - `lib/query-client.ts` (getQueryClient via React `cache()`), `lib/hydrate-client.tsx`
+     (HydrationBoundary), `features/products/server/prefetch.ts` (cookie-forwarded
+     server fetch → prefetchQuery). `params-loader.ts` + `toApiQuery()` (client +
+     server SAME query shape → exact queryKey match → hydration cache hit).
+   - `/seller/products/page.tsx` ab **server component**: `productParamsCache.parse(
+     searchParams)` → `toApiQuery` → `prefetchSellerProducts` → `<HydrateClient>`.
+     `use-products` bhi `toApiQuery` use karta (key match).
+2. **Double scrollbar fix** — shell ab `h-svh overflow-hidden` (SellerSidebarProvider +
+   SidebarInset `flex h-svh min-h-0 flex-col`), sirf `<main>` scroll (`min-h-0 flex-1
+   overflow-y-auto overflow-x-hidden`). Pehle body + main dono scroll karte the.
+3. **Single self-contained form** (course CreateCourseView pattern) — `form-fields.tsx`
+   + `product-form-body.tsx` DELETE. `create-product-view.tsx` me ab sab: Container/
+   Error/Content + `ProductFormSections` (shared body) + reusable inputs (SectionCard/
+   TextInput/NumberInput/PriceInput/TextareaInput/SwitchInput) + `productResolver` +
+   `PRODUCT_DEFAULTS` — sab exported. `edit-product-view.tsx` inhi ko import karke reuse
+   karta (no duplication). Heavy widgets (editor, uploaders, variant dialog, tag/size/
+   color/spec, category/discount) alag (course bhi aise rakhta).
+
+All tsc clean (only pre-existing calendar.tsx).
+
+---
+
+### Session 13 — 2026-05-31 (Category create + resilient upload + discount UI)
+
+1. **Resilient multi-image upload** (Amazon/Flipkart) — `ProductImagesUploader`
+   ab `Promise.allSettled` (parallel, independent). Partial failure pe jo images
+   SUCCESS hui woh gallery me add ho jaati hain (kabhi lost nahi) + failures ka
+   count toast me. Pehle sequential loop → ek fail pe poora reject → R2 pe chadi
+   images UI me dikhti hi nahi thi (orphan). Ab success kept, failed retry-able.
+2. **Category create UI** — backend category writes ab **seller cookie jar**
+   (requireSellerAuth + requireSellerCsrf, pehle ADMIN customer-jar). Frontend:
+   `createCategory` API + `useCreateCategory` + `CategorySelects` me "+ New" inline
+   dialog (category + subcategory dono) → create → auto-select.
+3. **Discount UI** — `DiscountCreateDialog` (reusable create/edit, PERCENT/FLAT,
+   rupees↔paise), `DiscountSelector` me "+ New code" inline (auto-select), aur
+   **`/seller/discount-codes`** management page (list/create/edit/delete, skeleton+
+   empty). Product form me DiscountSelector pehle se wired.
+4. **requireAuth UNAUTHORIZED warning** — product flow se nahi; ye customer-jar
+   `/auth/me` seller portal pe (no customer cookie) → 401 WARN, handled, benign.
+   Sab product/category/discount/upload calls `sellerHttp` (seller jar) use karte.
+5. **Edit form** — create ke same `ProductFormSections` reuse karta → identical
+   (all sections) + archive/restore/delete. Confirmed complete.
+
+All tsc clean (backend + web; only pre-existing calendar.tsx).
+
+---
+
+### Session 14 — 2026-05-31 (Draggable image preview + delete/reorder toasts)
+
+`ProductImagesUploader` (gallery, product + variant dono):
+- **Drag-to-reorder** — HTML5 DnD on rows (grip handle in Order column, no extra
+  dep). Drag → drop pe array reorder + positions recompute. motion `onDragStart`
+  gesture-typed tha → DOM DnD ke liye cast kiya. Thumbnail `next/image`
+  `draggable={false}` + `pointer-events-none` (native img-drag hijack avoid).
+- **Reorder toast** — loading "Reordering…" → success "Image order updated".
+- **Delete toast** — optimistic UI remove + `toast.promise(deleteMedia)` (loading
+  "Removing image…" → success "Image removed" / error). Key na ho to instant success.
+- Visual: dragging row opacity-50, drop-target top border highlight.
+
+tsc clean (web; only pre-existing calendar.tsx).
+
+---
+
+### Session 15 — 2026-05-31 (Discount page rebuilt — products-page architecture)
+
+DiscountSelector (product form) — inline create HATA diya; ab pure SELECTOR
+(create discount page pe hota, yahan sirf active chips select + "Manage codes"
+link). Empty pe discount page ka link.
+
+Discount-codes page ab products list ke EXACT same architecture:
+- `server/discount-params-loader.ts` — nuqs params (search/status all|active|
+  inactive/page/pageSize) + `toDiscountApiQuery` (client+server same key).
+- `hooks/use-discount-params.ts` (useQueryStates) + `use-discounts.ts` me naya
+  **`useDiscountList()`** (nuqs + 400ms debounced search + keepPreviousData +
+  filter/pagination helpers) — useProducts ka mirror.
+- `server/discount-prefetch.ts` — cookie-forwarded server prefetch.
+- `views/discount-codes-view.tsx` rewrite — Container/Content/Error, **table**
+  (Code/Title/Value/Uses/Active/Actions) + search + status filter + pagination
+  + skeleton + empty. Actions: **active toggle** (Switch, toast), edit dialog,
+  delete (confirm + toast). motion rows + keepPreviousData dim.
+- `page.tsx` ab server component: parse searchParams → prefetch → HydrateClient.
+
+All tsc clean (web; only pre-existing calendar.tsx).
+
+---
+
+### Session 16 — 2026-05-31 (Brand accent heading + full skeletons everywhere)
+
+1. **Accent heading line** — `components/shared/page-heading.tsx` (NEW): vertical
+   bar (`bg-primary`, theme-aware — orange hardcode NAHI) + title + description +
+   action slot. Applied: products list, discount codes. Inline accent line bhi:
+   create product, edit product, dashboard heading.
+2. **Dashboard skeleton rebuilt** — `dashboard-skeleton.tsx` ab new layout 1:1
+   mirror karta: heading (accent) + **2 KPI rows** (StatCards + ProductsStats) +
+   **2 charts** (pie donut + bar) + recent orders list. Pehle purana layout tha.
+3. **Route loading.tsx** — `products/loading.tsx` (heading + 4 stat cards + search
+   + table skeleton) aur `discount-codes/loading.tsx` (heading + search + table)
+   — server prefetch/navigation ke dauraan full-page skeleton (zero layout shift).
+4. Live-data skeletons pehle se: ProductsStats (per-card), CategoryPie/StatusBar
+   (ChartSkeleton), products table (ProductsTableSkeleton), discount table.
+   Ab har box/graph/list load pe skeleton dikhata (reference jaisa).
+
+All tsc clean (web; only pre-existing calendar.tsx).
+
+---
+
+### Session 17 — 2026-05-31 (Header/content alignment + cleanup)
+
+1. **Content alignment** — sab seller pages se `mx-auto max-w-*` HATA diya →
+   ab `w-full p-4 lg:p-6` (full-width, left-aligned). Pehle content centered tha
+   → header (Ratnakar) ke left edge se align nahi hota tha, bada gap dikhta. Ab
+   form/list/dashboard sab header ke gutter ke barabar (px-4 lg:px-6 = header same).
+   Updated: products-list, discount-codes, create-product, edit-product (+ loading),
+   dashboard-view, dashboard-skeleton, products/loading, discount-codes/loading.
+2. **Header vertical separator** — top bar me trigger aur "Ratnakar" ke beech wala
+   `Separator` (vertical border) hata diya (cleaner). Right-side separator (bell ↔
+   theme toggle) rakha.
+3. Title accent line (`bg-primary` vertical bar) sab pages pe consistent (Session 16).
+
+All tsc clean (web; only pre-existing calendar.tsx).
+
+---
+
+### Session 18 — 2026-05-31 (Create/Edit forms → course pattern, handleSubmit)
+
+User feedback: forms ko course CreateCourseView/EditCourseView jaisa banao —
+`form.handleSubmit(onSubmit)` use, sections INLINE, shared "sections component"
+nahi.
+- `ProductFormSections` (shared body) HATA diya. Ab CreateProductContent +
+  EditProductContent dono apne **inline sections** rakhte hain (course pattern).
+- Reusable inputs (SectionCard/TextInput/NumberInput/PriceInput/TextareaInput/
+  SwitchInput) + PRODUCT_DEFAULTS + productResolver `create-product-view` se
+  exported; edit unhe import karta (course-style cross-file input reuse).
+- **`<form onSubmit={form.handleSubmit(onSubmit)}>`** dono me — create me 2 submit
+  buttons (Save draft → setValue status DRAFT; Create → ACTIVE), dono handleSubmit
+  trigger karte (pehle `e.preventDefault()` + submitWith hack tha). Edit pehle se
+  handleSubmit use kar raha tha.
+- Heavy widgets (editor/uploaders/variant/category/discount/tag/size/color/spec)
+  feature components — imported (course bhi CourseDescriptionEditor/MediaUploader/
+  TagListInput import karta). Containers `w-full` (Session 17 alignment).
+
+All tsc clean (web; only pre-existing calendar.tsx).
+
+---
+
+### Session 19 — 2026-05-31 (Clean resolver + constants + hook toasts + publish)
+
+1. **Clean `zodResolver`** — dual-zod (v3 from MCP SDK + v4) ke karan `zodResolver`
+   ko cast lagana padta tha. `web/package.json` `pnpm.overrides.zod: 4.4.3` se
+   resolvers ko zod v4 mila → ab views me **`resolver: zodResolver(createProductSchema)`**
+   simple (no cast). `productResolver` helper hata diya.
+2. **Default values constants me** — `features/products/constants/product-defaults.ts`
+   → `productDefaultValues` (type validator se). Create + edit dono import karte
+   (employeeDefaultValues pattern). Inline `PRODUCT_DEFAULTS` hata diya.
+3. **Toasts hooks me** (useCourses pattern) — `use-product-mutations`: create
+   (published/draft), update, archive, restore khud toast karte + onError. delete
+   no-toast (caller wraps). Views ka `onSubmit` ab simple: `mutate(payload,
+   { onSuccess })` — no toast.promise/unwrap. create + edit dono.
+4. **Drag reorder → `toast.promise`** — media-uploader reorder ab toast.promise
+   (loading "Reordering…" → success) use karta (pehle loading+setTimeout tha).
+5. **Draft → Publish** — edit view me **Publish** button (DRAFT/OUT_OF_STOCK pe,
+   status→ACTIVE) + **Unpublish (to draft)** dropdown item (ACTIVE→DRAFT). Publish
+   se pehle image-required guard (no image → toast error). Status PATCH via update.
+
+All tsc clean (web; only pre-existing calendar.tsx).
+
+---
+
+### Session 20 — 2026-06-01 (Soft-delete + 24h auto-purge + PENDING status)
+
+User feedback (delete-product modals screenshots): Delete ab turant permanent
+nahi — product ko **delete state** me bhejo, **24h ke andar restore** ho sake,
+warna **cron khud DB + Cloudflare R2 se permanent** hata de. Saath me status
+dropdown me **Pending** add. Restore wahi (image jaisa). Industry-grade soft-delete.
+
+**Design decisions (user-confirmed via AskUserQuestion):**
+
+- Auto-purge: **in-process interval** (node-cron ki jagah plain `setInterval` —
+  extra dep nahi, 24h-purge ke liye second-precision ki zaroorat nahi).
+- **Delete = naya `DELETED` state, Archive se ALAG** (archive permanent-hide, koi
+  purge nahi; delete 24h recovery + purge). Restore dono se → DRAFT.
+- Status dropdown: **Draft / Published / Pending** (`ACTIVE` ka UI label
+  "Published"; `PENDING` = admin-approval intezaar — multi-vendor marketplace flow).
+- Delete confirm: **type "delete" to confirm** (existing `ConfirmTypeDeleteDialog`),
+  bas text badla ("24h me recover kar sakte ho", pehle "cannot be undone" tha).
+
+#### Database (`prisma/schema.prisma` + migration `20260531233124_product_soft_delete`)
+
+- `enum ProductStatus` += **`PENDING`** + **`DELETED`**.
+- `Product` += **`purgeAt DateTime?`** (= deletedAt + 24h; cron isse compare karta)
+  + `@@index([purgeAt])`. `deletedAt` pehle se tha.
+
+#### Backend (`modules/product/*` + worker)
+
+- `product.service.ts`:
+  - `softDeleteProduct()` (NEW) — DELETE button → status=DELETED, deletedAt=now,
+    purgeAt=now+24h (`DELETE_RETENTION_MS`). Turant hard-delete NAHI.
+  - `restoreProduct()` — ab **ARCHIVED ya DELETED dono** → DRAFT (deletedAt/purgeAt
+    null → purge skip).
+  - `archiveProduct()` — deletedAt/purgeAt clear bhi karta (DELETED→archive pe purge
+    cancel).
+  - `purgeExpiredProducts()` (NEW, ex-`deleteProduct`) — NO auth; cron call karta.
+    `findDueForPurge` → har product hard `remove()` + R2 `deleteObjects` (media keys
+    `extractProductKeys` se, TipTap-embedded bhi). Returns purged count.
+  - `goingPublic` guard `!== "DRAFT"` → `=== "ACTIVE"` (PENDING pe publishedAt na set ho).
+- `product.repository.ts`: `findDueForPurge(now)` (status=DELETED, purgeAt<=now +
+  media keys); `CARD_SELECT` += `deletedAt`/`purgeAt` (frontend countdown).
+- `product.controller.ts`: `DELETE /products/:id` ab `softDeleteProduct` call karta
+  ("moved to delete state — recover within 24 hours").
+- `product.validator.ts`: create status `["DRAFT","PENDING","ACTIVE"]`, update +=
+  PENDING, list filter += PENDING/DELETED.
+- **`src/workers/product-purge.worker.ts` (NEW)** — `startProductPurgeWorker` /
+  `stopProductPurgeWorker`. `setInterval` har 15 min → `purgeExpiredProducts`,
+  overlap-guard (`isRunning`), boot pe ek immediate run (downtime catch-up),
+  `.unref()` (clean shutdown). `server.ts` boot pe start + graceful-shutdown pe stop.
+
+#### Frontend (`features/products/*`)
+
+- `types.ts` — `ProductStatus` += PENDING/DELETED; `ProductListItem` += `deletedAt`/
+  `purgeAt`; `PRODUCT_STATUS_META` += Pending (sky) / Deleted (rose), ACTIVE label
+  "Published", ARCHIVED amber.
+- `validators/product-validator.ts` — create/update status += PENDING;
+  `productStatuses`/`productStatusLabels` += Pending (form dropdown).
+- `server/params-loader.ts` — `PRODUCT_STATUS_FILTERS` += PENDING/DELETED;
+  `SellerProductsApiQuery.status` union widen.
+- `components/products-search.tsx` — `STATUS_LABELS` += Pending/Deleted (+ Published).
+- `components/products-table.tsx` — Restore ab ARCHIVED **||** DELETED (green);
+  DELETED rows pe **`{hoursLeft}h left`** countdown badge (purgeAt se compute);
+  Delete item DELETED pe hidden; modal text → "delete state, 24h recover".
+- `views/edit-product-view.tsx` — same `canRestore` logic; Delete dropdown DELETED
+  pe hidden; Publish sirf non-(archived/deleted) pe; delete modal text updated.
+
+**Status dropdown create form me pehle se tha** (`SelectInput` + `productStatuses`)
+— bas validator/labels me PENDING add karne se aa gaya.
+
+**Files touched (Session 20):**
+
+- Backend: `prisma/schema.prisma` (+migration), `modules/product/{service,repository,
+  controller,validator}.ts`, `src/workers/product-purge.worker.ts` (NEW), `server.ts`
+- Frontend: `features/products/types.ts`, `validators/product-validator.ts`,
+  `server/params-loader.ts`, `components/{products-search,products-table}.tsx`,
+  `views/edit-product-view.tsx`
+
+Backend `tsc` clean (mere files; pre-existing seed/rate-limit/auth.service noise
+bacha). Web `tsc --noEmit` → **exit 0** (web me `typecheck` script nahi, direct tsc).
+Migration applied. `npx prisma generate` chalaya (purgeAt/DELETED/PENDING types).
+
+**Lifecycle (ab):**
+
+```
+       Delete(type "delete")        cron @ purgeAt (15-min interval)
+ koi bhi ───────────────────► DELETED ──────────────────────────► permanent (DB + R2)
+   ▲                            │  deletedAt + purgeAt=now+24h
+   │  Restore                   │
+   └─────────────────────────────┘ → DRAFT     Archive ──► ARCHIVED (hidden, no purge) ──Restore──► DRAFT
+```
+
+**Open / next session:**
+
+1. **Admin approval flow** — PENDING → admin review → ACTIVE/reject. Abhi PENDING
+   sirf status hai; admin-side approve/reject endpoint + UI baaki.
+2. **Multi-instance purge** — abhi in-process interval (single instance assume).
+   Scale pe Redis lock ya BullMQ/QStash worker, taaki duplicate purge na ho.
+3. **Coupon final-price calc** — DiscountCode abhi product se link hota hai par
+   checkout pe apply (salePrice − coupon) wali calc nahi (cart/order module ke saath).
+4. Carried over: orders/inventory, category seed, prod cookie domains, Stripe
+   Connect, Twilio creds, pre-existing tsc noise.
+
+**Smoke test:**
+
+```bash
+cd services && pnpm dev    # purge-worker boot pe "[purge-worker] started" log
+cd web && pnpm dev
+# 1. seller.localhost:3000 → /seller/products → kisi product pe Delete → type "delete"
+#    → row status "Deleted" + "24h left" badge. Public listing se gayab.
+# 2. Dropdown → Restore → status DRAFT wapas (deletedAt/purgeAt null).
+# 3. Status dropdown (create/edit) me Draft/Published/Pending teeno dikhein.
+# 4. 24h baad (ya purgeAt DB me past kar do) → next 15-min tick pe DB+R2 se permanent.
+```

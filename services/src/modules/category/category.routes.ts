@@ -2,20 +2,22 @@
 // category.routes.ts - Category endpoints
 // ============================================================================
 // Public reads (list/detail) — koi auth nahi (storefront + seller dropdown).
-// Writes (create/update/delete) — ADMIN only (customer cookie jar + role gate).
+// Writes (create/update/delete) — SELLER cookie jar (seller portal se taxonomy
+// manage hoti hai). Note: real Amazon me admin-only hota; is project me seller
+// apni categories bana sakta (single-tenant dev) — isliye seller jar.
 //
-//   GET    /api/v1/categories          → list (tree default)
-//   GET    /api/v1/categories/:slug     → single + children
-//   POST   /api/v1/categories          → create   (ADMIN)
-//   PATCH  /api/v1/categories/:id       → update   (ADMIN)
-//   DELETE /api/v1/categories/:id       → delete   (ADMIN)
+//   GET    /api/v1/categories          → list (tree default)   [public]
+//   GET    /api/v1/categories/:slug     → single + children     [public]
+//   POST   /api/v1/categories          → create   [seller]
+//   PATCH  /api/v1/categories/:id       → update   [seller]
+//   DELETE /api/v1/categories/:id       → delete   [seller]
 // ============================================================================
 
 import { Router } from "express";
 import { asyncHandler } from "../../middlewares/async-handler.js";
 import { validate } from "../../middlewares/validate.js";
-import { requireAuth, requireRole } from "../../middlewares/require-auth.js";
-import { requireCsrf } from "../../middlewares/csrf.js";
+import { requireSellerAuth } from "../../middlewares/require-auth.js";
+import { requireSellerCsrf } from "../../middlewares/csrf.js";
 import * as categoryController from "./category.controller.js";
 import {
   createCategorySchema,
@@ -36,21 +38,19 @@ router.get(
   asyncHandler(categoryController.getBySlug),
 );
 
-// ----- Admin writes -----
+// ----- Seller writes (seller cookie jar) -----
 router.post(
   "/",
-  requireCsrf,
-  requireAuth,
-  requireRole("ADMIN"),
+  requireSellerCsrf,
+  requireSellerAuth,
   validate(createCategorySchema),
   asyncHandler(categoryController.create),
 );
 
 router.patch(
   "/:id",
-  requireCsrf,
-  requireAuth,
-  requireRole("ADMIN"),
+  requireSellerCsrf,
+  requireSellerAuth,
   validate(categoryIdParam, "params"),
   validate(updateCategorySchema),
   asyncHandler(categoryController.update),
@@ -58,9 +58,8 @@ router.patch(
 
 router.delete(
   "/:id",
-  requireCsrf,
-  requireAuth,
-  requireRole("ADMIN"),
+  requireSellerCsrf,
+  requireSellerAuth,
   validate(categoryIdParam, "params"),
   asyncHandler(categoryController.remove),
 );

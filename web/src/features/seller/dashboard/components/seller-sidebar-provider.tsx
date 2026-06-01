@@ -31,7 +31,9 @@ export function SellerSidebarProvider({
       // Before rehydration → expanded default (matches SSR). After → store value.
       open={hydrated ? open : true}
       onOpenChange={setOpen}
-      className="min-h-svh"
+      // h-svh + overflow-hidden → shell viewport pe fix; sirf <main> scroll kare
+      // (warna double scrollbar: body + main dono scroll karte the)
+      className="h-svh overflow-hidden"
     >
       {children}
     </SidebarProvider>

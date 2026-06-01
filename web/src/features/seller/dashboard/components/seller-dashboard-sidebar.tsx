@@ -70,8 +70,8 @@ export function SellerDashboardSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-sidebar-border">
-      {/* ── Header — shop identity (h-14 so its border aligns with page header) ── */}
-      <SidebarHeader className="h-14 justify-center border-b border-sidebar-border px-2 py-0">
+      {/* ── Header — shop identity (h-16 so its border aligns with page header) ── */}
+      <SidebarHeader className="h-16 justify-center border-b border-sidebar-border px-2 py-0">
         {user ? <ShopBrand user={user} /> : <ShopBrandSkeleton />}
       </SidebarHeader>
 

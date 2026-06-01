@@ -127,3 +127,270 @@
     @apply font-sans;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────
+   TipTap editor + viewer — Notion-grade typography (theme-aware)
+   `.tt-editor` = live editor (ProseMirror), `.tt-content` = public viewer.
+   Colors via shadcn CSS vars → light + dark dono adapt.
+   ────────────────────────────────────────────────────────────── */
+@layer components {
+  /* Placeholder (empty blocks) */
+  .ProseMirror p.is-editor-empty:first-child::before,
+  .ProseMirror .is-empty::before {
+    content: attr(data-placeholder);
+    float: left;
+    color: var(--muted-foreground);
+    opacity: 0.6;
+    pointer-events: none;
+    height: 0;
+  }
+  .ProseMirror:focus {
+    outline: none;
+  }
+  .ProseMirror ::selection {
+    background-color: color-mix(in oklch, var(--primary) 25%, transparent);
+  }
+
+  .tt-editor,
+  .tt-content {
+    color: var(--foreground);
+    font-size: 1rem;
+    line-height: 1.65;
+  }
+  .tt-editor > *,
+  .tt-content > * {
+    margin-block: 0.5rem;
+  }
+
+  .tt-editor h1,
+  .tt-content h1 {
+    font-size: clamp(1.75rem, 3vw, 2.15rem);
+    line-height: 1.15;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-block: 1.4rem 0.5rem;
+  }
+  .tt-editor h2,
+  .tt-content h2 {
+    font-size: clamp(1.4rem, 2.4vw, 1.65rem);
+    line-height: 1.2;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    margin-block: 1.2rem 0.4rem;
+  }
+  .tt-editor h3,
+  .tt-content h3 {
+    font-size: 1.2rem;
+    line-height: 1.3;
+    font-weight: 600;
+    margin-block: 1rem 0.3rem;
+  }
+  .tt-editor strong,
+  .tt-content strong {
+    font-weight: 600;
+  }
+
+  .tt-editor blockquote,
+  .tt-content blockquote,
+  .tt-blockquote {
+    border-left: 3px solid var(--primary);
+    padding: 0.25rem 0 0.25rem 1rem;
+    margin-block: 1rem;
+    color: var(--muted-foreground);
+    font-style: italic;
+  }
+
+  /* Lists — Tailwind v4 preflight strips list-style; !important restores */
+  .tt-editor ul.tt-bullet-list,
+  .tt-editor ul:not(.tt-task-list),
+  .tt-content ul {
+    list-style: disc outside !important;
+    padding-left: 1.75rem;
+  }
+  .tt-editor ol.tt-ordered-list,
+  .tt-editor ol,
+  .tt-content ol {
+    list-style: decimal outside !important;
+    padding-left: 1.75rem;
+  }
+  .tt-editor ul ul,
+  .tt-content ul ul {
+    list-style: circle outside !important;
+  }
+  .tt-editor ol ol,
+  .tt-content ol ol {
+    list-style: lower-alpha outside !important;
+  }
+  .tt-editor li::marker,
+  .tt-content li::marker {
+    color: var(--muted-foreground);
+  }
+  .tt-editor li,
+  .tt-content li {
+    margin-block: 0.15rem;
+    display: list-item;
+  }
+  .tt-editor li > p,
+  .tt-content li > p {
+    margin: 0;
+  }
+
+  .tt-editor hr,
+  .tt-content hr {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin-block: 1.5rem;
+  }
+
+  .tt-editor code,
+  .tt-content code {
+    background: color-mix(in oklch, var(--primary) 12%, transparent);
+    color: var(--primary);
+    padding: 0.15rem 0.35rem;
+    border-radius: 0.3rem;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.9em;
+  }
+  .tt-code-block,
+  .tt-editor pre,
+  .tt-content pre {
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    padding: 1rem 1.25rem;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.875rem;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  .tt-editor pre code,
+  .tt-content pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+  }
+
+  .tt-link,
+  .tt-editor a,
+  .tt-content a {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+    cursor: pointer;
+  }
+  .tt-link:hover {
+    text-decoration-thickness: 2px;
+  }
+
+  .tt-image {
+    display: block;
+    margin: 1.5rem auto;
+    max-width: 100%;
+    border-radius: 0.75rem;
+    border: 1px solid var(--border);
+  }
+  .tt-video {
+    display: block;
+    width: 100%;
+    margin: 1.5rem 0;
+    border-radius: 0.75rem;
+    background: black;
+    max-height: 70vh;
+  }
+
+  /* Task list */
+  .tt-task-list {
+    list-style: none !important;
+    padding-left: 0;
+  }
+  .tt-task-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin-block: 0.25rem;
+  }
+  .tt-task-item > label {
+    margin-top: 0.3rem;
+    flex: 0 0 auto;
+  }
+  .tt-task-item > label > input[type="checkbox"] {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    border: 1.5px solid var(--muted-foreground);
+    border-radius: 0.25rem;
+    cursor: pointer;
+  }
+  .tt-task-item > label > input[type="checkbox"]:checked {
+    background-color: var(--primary);
+    border-color: var(--primary);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 8 7 12 13 4'/></svg>");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 12px;
+  }
+  .tt-task-item > div {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .tt-task-item[data-checked="true"] > div {
+    color: var(--muted-foreground);
+    text-decoration: line-through;
+  }
+
+  /* File chip */
+  .tt-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.9rem;
+    margin: 0.4rem 0;
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 0.75rem;
+    text-decoration: none !important;
+    color: var(--foreground) !important;
+    max-width: 100%;
+  }
+  .tt-file:hover {
+    border-color: var(--primary);
+  }
+  .tt-file-icon {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 0.5rem;
+    background: color-mix(in oklch, var(--primary) 15%, transparent);
+    color: var(--primary);
+    font-family: var(--font-mono, monospace);
+    font-size: 0.625rem;
+    font-weight: 700;
+  }
+  .tt-file-meta {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .tt-file-name {
+    font-size: 0.875rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tt-file-size {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.6875rem;
+    color: var(--muted-foreground);
+  }
+  .tt-file-arrow {
+    flex: 0 0 auto;
+    color: var(--muted-foreground);
+    font-size: 1.1rem;
+  }
+}

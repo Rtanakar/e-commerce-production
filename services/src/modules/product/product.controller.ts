@@ -111,12 +111,16 @@ export async function restore(req: Request, res: Response): Promise<void> {
   });
 }
 
-// DELETE /products/:id - hard delete + media cleanup
+// DELETE /products/:id - soft delete (DELETED state, 24h recovery)
 export async function remove(req: Request, res: Response): Promise<void> {
   const user = authUser(req);
-  await productService.deleteProduct(req.params.id as string, user);
+  const product = await productService.softDeleteProduct(req.params.id as string, user);
   res.status(HttpStatus.OK).json({
-    ...ApiResponseBuilder.success({ deleted: true }),
+    ...ApiResponseBuilder.success({
+      deleted: true,
+      product,
+      message: "Product moved to delete state — recover within 24 hours",
+    }),
     requestId: req.id,
   });
 }

@@ -167,6 +167,11 @@ export const sellerHttp = {
     sellerRequest<T>(path, { ...opts, method: "GET" }),
   post: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
     sellerRequest<T>(path, { ...opts, method: "POST", body }),
+  patch: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    sellerRequest<T>(path, { ...opts, method: "PATCH", body }),
+  // delete body optional (uploads delete bhejta hai { key })
+  del: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    sellerRequest<T>(path, { ...opts, method: "DELETE", body }),
 };
 
 // ============================================================================

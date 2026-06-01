@@ -18,8 +18,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { AuthUser } from "@/lib/auth/api";
 import { StatCards, type StatItem } from "../components/stat-cards";
-import { AiInsightsPanel } from "../components/ai-insights-panel";
 import { RecentOrdersPanel } from "../components/recent-orders-panel";
+import { ProductsStats } from "@/features/products/components/products-stats";
+import {
+  CategoryPieChart,
+  StatusBarChart,
+} from "@/features/products/components/analytics-charts";
 
 // ── MOCK KPIs — replace with GET /seller/stats ──────────────────────────────
 const STATS: StatItem[] = [
@@ -59,11 +63,12 @@ export function SellerDashboardView({ user }: { user: AuthUser }) {
   const underReview = status === "PENDING_REVIEW";
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-5 p-4 lg:p-6">
+    <div className="w-full space-y-5 p-4 lg:p-6">
       {/* Heading */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
+            <span className="inline-block h-6 w-1 rounded-full bg-primary" />
             <h1 className="text-xl font-bold tracking-tight text-foreground lg:text-2xl">
               Dashboard
             </h1>
@@ -94,18 +99,20 @@ export function SellerDashboardView({ user }: { user: AuthUser }) {
         </Button>
       </div>
 
-      {/* KPIs */}
+      {/* Revenue/orders KPIs (MOCK until orders module lands) */}
       <StatCards stats={STATS} />
 
-      {/* Insights + Orders */}
-      <div className="grid gap-4 xl:grid-cols-3">
-        <div className="xl:col-span-2">
-          <AiInsightsPanel />
-        </div>
-        <div className="xl:col-span-1">
-          <RecentOrdersPanel />
-        </div>
+      {/* Real catalogue KPIs (live product counts) */}
+      <ProductsStats />
+
+      {/* Analytics charts — category pie + status bar (REAL data) */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <CategoryPieChart />
+        <StatusBarChart />
       </div>
+
+      {/* Recent orders (MOCK until orders module) */}
+      <RecentOrdersPanel />
     </div>
   );
 }

@@ -1,12 +1,47 @@
-import { TicketPercent } from "lucide-react";
-import { ComingSoon } from "@/features/seller/dashboard/components/coming-soon";
+// ============================================================================
+// /seller/discount-codes — server prefetch + nuqs searchParams
+// ============================================================================
+// Products page ka same pattern: parse searchParams → prefetch (cookie-fwd) →
+// HydrateClient → client table (nuqs + keepPreviousData).
+// ============================================================================
 
-export default function SellerDiscountCodesPage() {
+import type { SearchParams } from "nuqs/server";
+import { ErrorBoundary } from "react-error-boundary";
+import { HydrateClient } from "@/lib/hydrate-client";
+import {
+  discountParamsCache,
+  toDiscountApiQuery,
+} from "@/features/products/server/discount-params-loader";
+import { prefetchSellerDiscounts } from "@/features/products/server/discount-prefetch";
+import {
+  DiscountCodesContainer,
+  DiscountCodesContent,
+  DiscountCodesError,
+} from "@/features/products/views/discount-codes-view";
+
+export const metadata = { title: "Discount codes" };
+
+export default async function SellerDiscountCodesPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const params = await discountParamsCache.parse(searchParams);
+  const apiQuery = toDiscountApiQuery(params);
+
+  try {
+    await prefetchSellerDiscounts(apiQuery);
+  } catch {
+    /* client refetch fallback */
+  }
+
   return (
-    <ComingSoon
-      title="Discount Codes"
-      icon={TicketPercent}
-      description="Create and manage promo codes for your shop."
-    />
+    <DiscountCodesContainer>
+      <HydrateClient>
+        <ErrorBoundary fallback={<DiscountCodesError />}>
+          <DiscountCodesContent />
+        </ErrorBoundary>
+      </HydrateClient>
+    </DiscountCodesContainer>
   );
 }

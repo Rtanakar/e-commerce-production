@@ -35,6 +35,37 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+
+  images: {
+    remotePatterns: [
+      // R2 public bucket — hostname HOST-ONLY hota hai (no "https://" prefix,
+      // warna kabhi match nahi karta → next/image preview reject kar deta).
+      // Specific pub-*.r2.dev + wildcard r2.dev + custom domains dono cover.
+      {
+        protocol: "https",
+        hostname: "pub-01afe1203b1d4683bb6fac84815ecda1.r2.dev",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "*.r2.dev",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "*.r2.cloudflarestorage.com",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "lh3.googleusercontent.com",
+      },
+      {
+        protocol: "https",
+        hostname: "avatars.githubusercontent.com",
+      },
+    ],
+  },
 };
 
 export default nextConfig;

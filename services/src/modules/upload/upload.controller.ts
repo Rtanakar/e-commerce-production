@@ -18,6 +18,21 @@ import { ApiResponseBuilder } from "../../interfaces/api-response.js";
 import { HttpStatus } from "../../utils/http-status.js";
 import { UnauthorizedError, ForbiddenError, BadRequestError } from "../../utils/errors.js";
 import type { PresignUploadDto, DeleteObjectDto } from "./upload.validator.js";
+import type { MediaKind } from "../../lib/storage.js";
+
+// image-type purpose kinds (folder decide). Non-image kind aaye to safe default.
+const IMAGE_KINDS = new Set<MediaKind>([
+  "product-images",
+  "product-banner",
+  "product-variant",
+  "product-content-image",
+  "image",
+]);
+function resolveImageKind(raw: unknown): MediaKind {
+  return typeof raw === "string" && IMAGE_KINDS.has(raw as MediaKind)
+    ? (raw as MediaKind)
+    : "product-images";
+}
 
 // ============================================================================
 // POST /uploads/image - server-side optimize (webp/avif) + R2/S3 upload
@@ -30,12 +45,14 @@ export async function uploadImage(req: Request, res: Response): Promise<void> {
   if (!req.user) throw new UnauthorizedError();
   if (!req.file) throw new BadRequestError("No image file provided (field name: 'file')");
 
-  const scope = req.user.sub; // seller folder: images/<userId>/...
+  const scope = req.user.sub; // seller folder: <prefix>/<userId>/...
   const wantThumb = req.query.thumbnail === "true";
+  // kind query/body se → purpose-based folder (product-images / product-banner / ...)
+  const kind = resolveImageKind(req.query.kind ?? (req.body as { kind?: string })?.kind);
 
   // ── Main optimized image ──
   const main = await processImage(req.file.buffer);
-  const mainKey = buildKey("image", main.contentType, scope);
+  const mainKey = buildKey(kind, main.contentType, scope);
   const { publicUrl: url } = await putObject({
     key: mainKey,
     body: main.buffer,
@@ -48,7 +65,7 @@ export async function uploadImage(req: Request, res: Response): Promise<void> {
     | undefined;
   if (wantThumb) {
     const thumb = await processThumbnail(req.file.buffer);
-    const thumbKey = buildKey("image", thumb.contentType, scope);
+    const thumbKey = buildKey(kind, thumb.contentType, scope);
     const { publicUrl: turl } = await putObject({
       key: thumbKey,
       body: thumb.buffer,

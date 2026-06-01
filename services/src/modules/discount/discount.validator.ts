@@ -80,7 +80,13 @@ export const updateDiscountSchema = z
 // ============================================================================
 export const listDiscountsSchema = z.object({
   search: z.string().trim().optional(),
-  isActive: z.coerce.boolean().optional(),
+  // ⚠️ z.coerce.boolean() mat use karo: query string "false" → Boolean("false")
+  // === true ban jaata hai (har non-empty string truthy). Isse "inactive" filter
+  // toot jaata. Yahan literal "true"/"false" string ko sahi boolean me map karte.
+  isActive: z
+    .union([z.boolean(), z.enum(["true", "false"])])
+    .transform((v) => v === true || v === "true")
+    .optional(),
   cursor: z.string().cuid().optional().nullable(),
   limit: z.coerce
     .number()

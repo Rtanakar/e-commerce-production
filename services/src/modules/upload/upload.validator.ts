@@ -15,13 +15,34 @@ extendZodWithOpenApi(z);
 // sizeBytes    → optional, server-side size guard (client cheat kar sakta hai
 //                par yeh first line of defense; real enforcement bucket policy)
 // ============================================================================
+// Purpose-based kinds (storage.ts MediaKind ka mirror) + legacy retained
+const uploadKindEnum = z.enum([
+  "product-images",
+  "product-banner",
+  "product-variant",
+  "product-content-image",
+  "product-content-file",
+  "product-video",
+  // legacy
+  "image",
+  "video",
+  "file",
+]);
+
 export const presignUploadSchema = z
   .object({
-    kind: z.enum(["image", "video", "file"]).default("image"),
+    kind: uploadKindEnum.default("image"),
     contentType: z.string().min(3).max(100).openapi({ example: "image/webp" }),
     sizeBytes: z.number().int().positive().optional(),
   })
   .openapi("PresignUploadRequest");
+
+// /uploads/image (multipart) ke liye optional kind (folder decide karta) —
+// query ya body se aa sakta. Image-type kinds hi valid (server sharp optimize).
+export const uploadImageQuerySchema = z.object({
+  kind: uploadKindEnum.optional(),
+  thumbnail: z.coerce.boolean().optional(),
+});
 
 // ============================================================================
 // DELETE - object key se storage object hatao
@@ -37,3 +58,4 @@ export const deleteObjectSchema = z
 
 export type PresignUploadDto = z.infer<typeof presignUploadSchema>;
 export type DeleteObjectDto = z.infer<typeof deleteObjectSchema>;
+export type UploadImageQuery = z.infer<typeof uploadImageQuerySchema>;

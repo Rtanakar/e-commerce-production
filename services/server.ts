@@ -19,6 +19,7 @@ import { disconnectPrisma } from "./src/db/prisma.js";
 import { disconnectRedis } from "./src/lib/redis.js";
 import { closeMailer } from "./src/lib/mailer.js";
 import { printStartupBanner } from "./src/utils/startup-banner.js";
+import { startProductPurgeWorker, stopProductPurgeWorker } from "./src/workers/product-purge.worker.js";
 import app from "@/app.js";
 
 // ============================================================================
@@ -31,6 +32,9 @@ const server = app.listen(env.PORT, () => {
   void printStartupBanner(env.PORT).catch((err) => {
     logger.error({ err }, "Startup banner failed");
   });
+
+  // Background jobs — 24h purane soft-deleted products ko DB+R2 se purge karne wala cron
+  startProductPurgeWorker();
 });
 
 // Server-level timeouts - hanging connections prevent
@@ -63,6 +67,9 @@ async function shutdown(signal: string): Promise<void> {
   isShuttingDown = true;
 
   logger.info({ signal }, "Graceful shutdown initiated");
+
+  // Background cron stop — naye purge runs na shuru hon shutdown ke beech
+  stopProductPurgeWorker();
 
   // Force exit timeout - hanging requests forever wait nahi karenge
   const forceExitTimer = setTimeout(() => {

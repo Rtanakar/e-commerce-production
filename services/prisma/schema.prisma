@@ -235,8 +235,10 @@ model Address {
 
 enum ProductStatus {
   DRAFT // seller ne save kiya par publish nahi (Save Draft button)
+  PENDING // admin approval ka intezaar — seller ne publish maanga, abhi review me
   ACTIVE // live, public listing me dikhega (Create/Publish button)
-  ARCHIVED // soft-delete — listing se hidden, restore ho sakta hai
+  ARCHIVED // listing se hidden par permanent rehta — restore ho sakta hai
+  DELETED // soft-delete — 24h recovery window, fir cron DB+R2 se permanent hata deta
   OUT_OF_STOCK // stock 0 — dikhega par "out of stock" badge ke saath
 }
 
@@ -335,6 +337,12 @@ model Product {
   status      ProductStatus @default(DRAFT)
   publishedAt DateTime? // DRAFT → ACTIVE pe ek baar set, dobara reset nahi
 
+  // ── Event / limited-time sale (Flipkart/Amazon deal window) ──
+  // Dono optional. Set hone par product ek time-bound "event" deal hai —
+  // frontend countdown / "Deal ends in…" dikha sakta hai. null = normal product.
+  eventStartsAt DateTime?
+  eventEndsAt   DateTime?
+
   // ── SEO ──
   metaTitle       String?
   metaDescription String?
@@ -350,8 +358,12 @@ model Product {
   variants      ProductVariant[]
   discountCodes DiscountCode[]   @relation("ProductDiscountCodes")
 
-  // Soft delete (ARCHIVED ke saath deletedAt set — audit/restore ke liye)
+  // ── Soft delete (DELETE button — 24h recovery window) ──
+  // deletedAt → kab soft-delete hua (DELETED status ke saath set)
+  // purgeAt   → deletedAt + 24h. Cron is time ke baad DB + R2 se permanent
+  //             delete kar deta. Restore pe dono null ho jaate.
   deletedAt DateTime?
+  purgeAt   DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -362,6 +374,7 @@ model Product {
   @@index([subcategoryId])
   @@index([vendorId, status]) // seller dashboard "All Products" filter
   @@index([status, createdAt]) // public listing newest-first
+  @@index([purgeAt]) // purge cron — due-for-delete products fast scan
   @@map("products")
 }
 

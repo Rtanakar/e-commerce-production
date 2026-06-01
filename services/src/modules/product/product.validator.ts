@@ -100,7 +100,11 @@ export const createProductSchema = z
 
     // ── Lifecycle ──
     // "Save Draft" → DRAFT, "Create" → ACTIVE
-    status: z.enum(["DRAFT", "ACTIVE"]).default("DRAFT"),
+    status: z.enum(["DRAFT", "PENDING", "ACTIVE"]).default("DRAFT"),
+
+    // ── Event / limited-time sale (optional deal window) ──
+    eventStartsAt: z.coerce.date().optional().nullable(),
+    eventEndsAt: z.coerce.date().optional().nullable(),
 
     // ── SEO ──
     metaTitle: z.string().max(160).trim().optional(),
@@ -111,6 +115,11 @@ export const createProductSchema = z
     message: "Sale price cannot exceed regular price",
     path: ["salePrice"],
   })
+  // event end start ke baad ho
+  .refine(
+    (d) => !d.eventStartsAt || !d.eventEndsAt || d.eventEndsAt > d.eventStartsAt,
+    { message: "Event end must be after event start", path: ["eventEndsAt"] },
+  )
   // ACTIVE publish ke liye kam se kam ek image zaroori
   .refine((d) => d.status !== "ACTIVE" || d.images.length > 0, {
     message: "At least one image is required to publish a product",
@@ -146,7 +155,9 @@ export const updateProductSchema = z
     images: z.array(imageSchema).max(CATALOG.MAX_IMAGES_PER_PRODUCT).optional(),
     variants: z.array(variantSchema).max(CATALOG.MAX_VARIANTS_PER_PRODUCT).optional(),
     discountCodeIds: z.array(z.string().cuid()).max(20).optional(),
-    status: z.enum(["DRAFT", "ACTIVE", "OUT_OF_STOCK"]).optional(),
+    status: z.enum(["DRAFT", "PENDING", "ACTIVE", "OUT_OF_STOCK"]).optional(),
+    eventStartsAt: z.coerce.date().optional().nullable(),
+    eventEndsAt: z.coerce.date().optional().nullable(),
     metaTitle: z.string().max(160).trim().optional().nullable(),
     metaDescription: z.string().max(320).trim().optional().nullable(),
   })
@@ -160,8 +171,8 @@ export const listProductsSchema = z.object({
   // seller "All Products" multiple status filter; public route force ACTIVE
   status: z
     .union([
-      z.enum(["DRAFT", "ACTIVE", "ARCHIVED", "OUT_OF_STOCK"]),
-      z.array(z.enum(["DRAFT", "ACTIVE", "ARCHIVED", "OUT_OF_STOCK"])),
+      z.enum(["DRAFT", "PENDING", "ACTIVE", "ARCHIVED", "DELETED", "OUT_OF_STOCK"]),
+      z.array(z.enum(["DRAFT", "PENDING", "ACTIVE", "ARCHIVED", "DELETED", "OUT_OF_STOCK"])),
     ])
     .optional(),
   categoryId: z.string().cuid().optional(),

@@ -28,9 +28,12 @@ export default async function SellerDashboardLayout({
       {/* Sidebar fetches its own user (skeleton on first load). Header gets the
           server user for an instant greeting. */}
       <SellerDashboardSidebar />
-      <SidebarInset className="min-h-svh bg-muted/30">
+      {/* h-svh + min-h-0 → inset viewport height pe locked; sirf main scroll */}
+      <SidebarInset className="flex h-svh min-h-0 flex-col bg-muted/30">
         <SellerDashboardHeader user={user} />
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+          {children}
+        </main>
       </SidebarInset>
     </SellerSidebarProvider>
   );

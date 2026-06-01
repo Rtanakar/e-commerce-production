@@ -20,14 +20,13 @@ export function SellerDashboardHeader({ user }: { user: AuthUser }) {
   const firstName = user.name?.split(" ")[0] ?? "Seller";
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border bg-background/80 px-3 backdrop-blur-xl lg:px-5">
+    <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between gap-2 border-b border-border bg-background/80 px-4 backdrop-blur-xl lg:px-6">
       {/* Left — trigger + greeting */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <SidebarTrigger className="-ml-1" />
-        <Separator orientation="vertical" className="mr-1 h-5" />
         <div className="leading-tight">
-          <p className="text-[11px] text-muted-foreground">Welcome back</p>
-          <h1 className="text-sm font-semibold tracking-tight text-foreground">
+          <p className="text-xs text-muted-foreground">Welcome back</p>
+          <h1 className="text-base font-semibold tracking-tight text-foreground">
             {firstName} 👋
           </h1>
         </div>

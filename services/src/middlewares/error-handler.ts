@@ -147,6 +147,32 @@ export function errorHandler(
     return;
   }
 
+  // ===== 4b. Prisma connection / availability errors → 503 (retryable) =====
+  // Retry wrapper (db/prisma.ts) inhe pehle hi handle karta; yahan tak aaya
+  // matlab retries exhaust ho gaye. Client ko clean 503 do (500 nahi) — internal
+  // detail prod me kabhi leak nahi (generic message).
+  const TRANSIENT_CODES = new Set(["P1001", "P1002", "P1008", "P1017"]);
+  const isConnError =
+    err instanceof Prisma.PrismaClientInitializationError ||
+    err instanceof Prisma.PrismaClientRustPanicError ||
+    (err instanceof Prisma.PrismaClientKnownRequestError &&
+      TRANSIENT_CODES.has(err.code)) ||
+    (err instanceof Error &&
+      /server has closed the connection|connection (terminated|closed|refused)|econnreset/i.test(
+        err.message,
+      ));
+  if (isConnError) {
+    log.error({ requestId }, "Database temporarily unavailable");
+    res.status(HttpStatus.SERVICE_UNAVAILABLE).json({
+      ...ApiResponseBuilder.error(
+        ErrorCode.SERVICE_UNAVAILABLE,
+        "Service temporarily unavailable. Please try again in a moment.",
+      ),
+      requestId,
+    });
+    return;
+  }
+
   // ===== 5. Unknown errors - bug class =====
   // Production: NEVER expose stack trace - security risk
   // Dev: expose for debugging

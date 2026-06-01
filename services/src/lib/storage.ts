@@ -126,27 +126,45 @@ export function keyFromPublicUrl(url: string): string | null {
 // Folder structure: <category>/<vendorId>/<uuid>.<ext>
 // Isse storage browse karna + lifecycle rules (e.g. tmp expire) aasaan.
 // ============================================================================
-export type MediaKind = "image" | "video" | "file";
+// ── Purpose-based media kinds (course/LMS pattern) ──────────────────────────
+// Har kind ka apna R2 folder (prefix). Isse storage browse + lifecycle rules
+// aasaan. Legacy kinds (image/video/file) backward-compat ke liye retained —
+// purane callers tootein na.
+export type MediaKind =
+  // product purpose-based
+  | "product-images" // gallery
+  | "product-banner" // banner strip
+  | "product-variant" // variant gallery
+  | "product-content-image" // TipTap inline image
+  | "product-content-file" // TipTap attachment (pdf/doc/...)
+  | "product-video" // product/demo + TipTap video
+  // legacy (generic) — abhi bhi accept
+  | "image"
+  | "video"
+  | "file";
+
+// Common MIME groups (DRY)
+const IMG_MIME = /^image\/(jpeg|png|webp|avif|gif)$/;
+const VID_MIME = /^video\/(mp4|webm|quicktime|x-matroska)$/;
+// pdf, word, excel, powerpoint, zip, json, plain, markdown, csv
+const FILE_MIME =
+  /^(application\/(pdf|zip|x-zip-compressed|json|msword|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)|vnd\.ms-(excel|powerpoint))|text\/(plain|markdown|csv))$/;
+
+const MB = 1024 * 1024;
 
 const MEDIA_RULES: Record<MediaKind, { prefix: string; maxBytes: number; allowed: RegExp }> = {
-  // 4 MB images (UI: "Images up to 4MB")
-  image: {
-    prefix: "images",
-    maxBytes: 4 * 1024 * 1024,
-    allowed: /^image\/(jpeg|png|webp|avif|gif)$/,
-  },
-  // 200 MB videos
-  video: {
-    prefix: "videos",
-    maxBytes: 200 * 1024 * 1024,
-    allowed: /^video\/(mp4|webm|quicktime)$/,
-  },
-  // 20 MB generic files (pdf/docs)
-  file: {
-    prefix: "files",
-    maxBytes: 20 * 1024 * 1024,
-    allowed: /^(application\/pdf|application\/zip|text\/plain)$/,
-  },
+  // ── Product (purpose-based) ──
+  "product-images": { prefix: "product-images", maxBytes: 5 * MB, allowed: IMG_MIME },
+  "product-banner": { prefix: "product-banner", maxBytes: 5 * MB, allowed: IMG_MIME },
+  "product-variant": { prefix: "product-variant", maxBytes: 5 * MB, allowed: IMG_MIME },
+  "product-content-image": { prefix: "product-content-image", maxBytes: 5 * MB, allowed: IMG_MIME },
+  "product-content-file": { prefix: "product-content-file", maxBytes: 50 * MB, allowed: FILE_MIME },
+  "product-video": { prefix: "product-video", maxBytes: 200 * MB, allowed: VID_MIME },
+
+  // ── Legacy (generic folders) — backward-compat ──
+  image: { prefix: "images", maxBytes: 5 * MB, allowed: IMG_MIME },
+  video: { prefix: "videos", maxBytes: 200 * MB, allowed: VID_MIME },
+  file: { prefix: "files", maxBytes: 50 * MB, allowed: FILE_MIME },
 };
 
 // contentType → extension (key banane ke liye)
@@ -159,9 +177,20 @@ const EXT_BY_TYPE: Record<string, string> = {
   "video/mp4": "mp4",
   "video/webm": "webm",
   "video/quicktime": "mov",
+  "video/x-matroska": "mkv",
   "application/pdf": "pdf",
   "application/zip": "zip",
+  "application/x-zip-compressed": "zip",
+  "application/json": "json",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.ms-powerpoint": "ppt",
   "text/plain": "txt",
+  "text/markdown": "md",
+  "text/csv": "csv",
 };
 
 // ============================================================================
