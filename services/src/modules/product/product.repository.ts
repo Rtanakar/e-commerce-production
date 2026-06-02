@@ -38,6 +38,48 @@ const CARD_SELECT = {
   },
 } as const satisfies Prisma.ProductSelect;
 
+// Storefront card projection — public listing (multiple images + color variants
+// taaki frontend pe hover thumbnail strip + variant swatches dikhein, Amazon style)
+const STOREFRONT_SELECT = {
+  id: true,
+  slug: true,
+  title: true,
+  brand: true,
+  shortDescription: true,
+  status: true,
+  currency: true,
+  regularPrice: true,
+  salePrice: true,
+  discountPercent: true,
+  stock: true,
+  ratingAvg: true,
+  ratingCount: true,
+  soldCount: true,
+  createdAt: true,
+  colors: true, // base product ke hex colors — default swatch ka actual color (image nahi)
+  bannerUrl: true, // seller ne create-time "Banner (optional)" upload kiya — hero carousel
+  // saari product-level gallery images (variantId null) — hover strip ke liye
+  images: {
+    where: { variantId: null },
+    orderBy: [{ isPrimary: "desc" }, { position: "asc" }],
+    select: { url: true, alt: true },
+  },
+  // color variants (apni image ke saath) — card pe swatch + switch
+  variants: {
+    orderBy: { position: "asc" },
+    select: {
+      id: true,
+      title: true,
+      color: true,
+      price: true,
+      stock: true,
+      images: { orderBy: { position: "asc" }, select: { url: true, alt: true } },
+    },
+  },
+  category: { select: { id: true, name: true, slug: true } },
+  subcategory: { select: { id: true, name: true, slug: true } },
+} as const satisfies Prisma.ProductSelect;
+
 // Full detail include — single product (edit form / public detail page)
 const FULL_INCLUDE = {
   images: { orderBy: [{ isPrimary: "desc" }, { position: "asc" }] },
@@ -101,14 +143,17 @@ export async function list(params: {
   cursor?: string | null;
   page: number;
   limit: number;
+  // "storefront" → rich card (images + variants); default seller light card
+  variant?: "seller" | "storefront";
 }) {
-  const { where, orderBy, cursor, page, limit } = params;
+  const { where, orderBy, cursor, page, limit, variant = "seller" } = params;
+  const select = variant === "storefront" ? STOREFRONT_SELECT : CARD_SELECT;
 
   const [rows, totalCount] = await Promise.all([
     prisma.product.findMany({
       where,
       orderBy,
-      select: CARD_SELECT,
+      select,
       ...buildCursorArgs({ cursor, page, limit }),
     }),
     prisma.product.count({ where }),

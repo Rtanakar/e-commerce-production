@@ -185,7 +185,7 @@ export async function listPublicProducts(query: ListProductsQuery) {
     ...buildSearchWhere(query.search),
   };
 
-  return runList(where, query);
+  return runList(where, query, "storefront");
 }
 
 // ============================================================================
@@ -216,13 +216,18 @@ export async function listVendorProducts(userId: string, query: ListProductsQuer
 }
 
 // shared list runner
-async function runList(where: Prisma.ProductWhereInput, query: ListProductsQuery) {
+async function runList(
+  where: Prisma.ProductWhereInput,
+  query: ListProductsQuery,
+  variant: "seller" | "storefront" = "seller",
+) {
   const { items, nextCursor, hasNextPage, totalCount } = await productRepo.list({
     where,
     orderBy: buildOrderBy(query.sort),
     cursor: query.cursor,
     page: query.page,
     limit: query.limit,
+    variant,
   });
 
   return {

@@ -53,6 +53,8 @@ import vendorRoutes from "./modules/vendor/vendor.routes.js";
 import categoryRoutes from "./modules/category/category.routes.js";
 import productRoutes from "./modules/product/product.routes.js";
 import discountRoutes from "./modules/discount/discount.routes.js";
+import cartRoutes from "./modules/cart/cart.routes.js";
+import wishlistRoutes from "./modules/wishlist/wishlist.routes.js";
 import uploadRoutes from "./modules/upload/upload.routes.js";
 import healthRoutes from "./modules/health/health.routes.js";
 import docsRoutes from "./modules/docs/docs.routes.js";
@@ -272,6 +274,8 @@ app.use(`${apiBase}/vendors`, vendorRoutes);
 app.use(`${apiBase}/categories`, categoryRoutes);
 app.use(`${apiBase}/products`, productRoutes);
 app.use(`${apiBase}/discounts`, discountRoutes);
+app.use(`${apiBase}/cart`, cartRoutes);
+app.use(`${apiBase}/wishlist`, wishlistRoutes);
 app.use(`${apiBase}/uploads`, uploadRoutes);
 
 // ----- FUTURE MODULES (uncomment as they are built) -----

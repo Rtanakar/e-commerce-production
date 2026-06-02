@@ -31,6 +31,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { CategoryBar } from "./category-bar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useCart } from "@/features/shop/hooks/use-cart";
+import { useWishlist } from "@/features/shop/hooks/use-wishlist";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -66,8 +68,8 @@ export function SiteHeader() {
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <ThemeToggle />
           <UserMenu />
-          <WishlistButton count={0} />
-          <CartButton count={0} />
+          <WishlistButton />
+          <CartButton />
         </div>
       </div>
 
@@ -237,10 +239,10 @@ function SearchBar() {
 // ============================================================================
 // WishlistButton - icon + count badge
 // ============================================================================
-// Count is static (0) for now - cart/wishlist state wiring is a separate task.
-// Designed to accept `count` prop so swap is one-line later.
+// Live count from useWishlist (guest Zustand ya server, auth-aware).
 // ============================================================================
-function WishlistButton({ count }: { count: number }) {
+function WishlistButton() {
+  const { count } = useWishlist();
   return (
     <Link
       href="/wishlist"
@@ -260,7 +262,8 @@ function WishlistButton({ count }: { count: number }) {
 // ============================================================================
 // CartButton - icon + count badge
 // ============================================================================
-function CartButton({ count }: { count: number }) {
+function CartButton() {
+  const { totalItems: count } = useCart();
   return (
     <Link
       href="/cart"

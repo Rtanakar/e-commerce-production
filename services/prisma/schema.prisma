@@ -85,6 +85,10 @@ model User {
   customerProfile CustomerProfile?
   addresses       Address[]
 
+  // Shopping relations (customer side)
+  cartItems     CartItem[]
+  wishlistItems WishlistItem[]
+
   @@index([email])
   @@index([status, role])
   @@index([role])
@@ -357,6 +361,8 @@ model Product {
   images        ProductImage[]
   variants      ProductVariant[]
   discountCodes DiscountCode[]   @relation("ProductDiscountCodes")
+  cartItems     CartItem[]
+  wishlistItems WishlistItem[]
 
   // ── Soft delete (DELETE button — 24h recovery window) ──
   // deletedAt → kab soft-delete hua (DELETED status ke saath set)
@@ -434,6 +440,10 @@ model ProductVariant {
 
   images ProductImage[] // variant ki apni images
 
+  // Cart/Wishlist isi specific variant ko point kar sakte (color/size choice)
+  cartItems     CartItem[]
+  wishlistItems WishlistItem[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -477,4 +487,59 @@ model DiscountCode {
   @@index([vendorId])
   @@index([isActive])
   @@map("discount_codes")
+}
+
+// ============================================================================
+// CART ITEM — logged-in user ka server-side cart (Amazon "saved cart" pattern)
+// ============================================================================
+// Guest cart client-side (Zustand + localStorage) chalta hai; login pe woh
+// server cart me merge ho jaata hai. Ek row = ek (user + product + variant)
+// combination — isliye @@unique. variantId null = base product (no color/size
+// choice). quantity hamesha >= 1; 0 pe row delete hoti hai (service layer).
+//
+// Price yahan store NAHI karte — hamesha live Product/Variant se aata hai
+// (stale-price bug se bachne ke liye; checkout pe snapshot lenge order me).
+// ============================================================================
+model CartItem {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // Optional variant (color/size). null = base product.
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  quantity Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Ek user ke paas same product+variant ki sirf ek row (quantity badhti hai)
+  @@unique([userId, productId, variantId])
+  @@index([userId])
+  @@map("cart_items")
+}
+
+// ============================================================================
+// WISHLIST ITEM — "save for later" (heart icon). Quantity nahi (sirf bookmark).
+// ============================================================================
+model WishlistItem {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId, variantId])
+  @@index([userId])
+  @@map("wishlist_items")
 }

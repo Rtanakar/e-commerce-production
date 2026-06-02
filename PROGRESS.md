@@ -1205,3 +1205,206 @@ cd web && pnpm dev
 # 3. Status dropdown (create/edit) me Draft/Published/Pending teeno dikhein.
 # 4. 24h baad (ya purgeAt DB me past kar do) → next 15-min tick pe DB+R2 se permanent.
 ```
+
+---
+
+### Session 21 — 2026-06-01 (Customer storefront — Cart + Wishlist + location + product card with color variants)
+
+User feedback (Becodemy-style reference code + screenshots): customer-facing
+**product card + quick-view + add-to-cart + wishlist** banao, **Zustand** se,
+**motion** animations, **backend (DB)** ke saath, aur **location** ka use
+delivery-estimate ke liye. Amazon jaisa — ek product ke multiple color variants
+card pe swatches se dikhein. NOTE: pasted code dusre project (tRPC+Redux,
+apps/user-ui) ka tha; humne apne stack (TanStack Query + Zustand + Prisma +
+customer `api` jar) me banaya.
+
+**Design decisions (user-confirmed via AskUserQuestion):**
+- Target: **current project `web/` (shop)**, existing stack.
+- State: **Zustand** (guest) + TanStack Query (server) hybrid.
+- Persistence: **backend (DB)** — Prisma CartItem/WishlistItem + API.
+- Location: **delivery estimate + currency** (ip-api + 20-day localStorage cache).
+
+#### Database (`prisma/schema.prisma` + migration `20260601235511_cart_wishlist`)
+- **CartItem** — `userId + productId + variantId(nullable)` unique, quantity.
+  Price store NAHI (live Product/Variant se; stale-price bug se bachne ko).
+- **WishlistItem** — same shape, no quantity (bookmark).
+- Back-relations: User (`cartItems`/`wishlistItems`), Product, ProductVariant.
+
+#### Backend (`modules/cart/*` + `modules/wishlist/*`, customer cookie jar)
+- **cart** (validator/repository/service/controller/routes):
+  - `GET /cart` (lines + computed totals: subtotal/mrpTotal/savings/totalItems),
+    `GET /cart/count`, `POST /cart/items` (add/increment, **stock clamp**),
+    `PATCH /cart/items` (absolute qty, 0=remove), `DELETE /cart/items` (one),
+    `DELETE /cart` (clear), `POST /cart/merge` (guest→server on login).
+  - Service guards: product ACTIVE + not-deleted, variant product se match,
+    effective price = `variant.price ?? product.salePrice`, stock = variant ya
+    product. variantId nullable → repo `findFirst` (Postgres NULL-unique issue).
+- **wishlist**: `GET /wishlist`, `/count`, `/ids` (hydration), `POST /toggle`
+  (heart), `POST/DELETE /items`, `POST /merge`. Out-of-stock allowed (save for
+  later); deleted/archived nahi.
+- `app.ts` — mounted `/api/v1/cart` + `/api/v1/wishlist`.
+- All requireAuth + requireCsrf (mutations). Naye files zero tsc errors
+  (sirf pehle wala seed/rate-limit/auth.service noise bacha).
+
+#### Frontend (`features/shop/*` — NEW customer feature module)
+- `utils/currency.ts` (NEW) — `formatMoney` (minor units → ₹, Intl), `computeDiscountPercent`.
+- `hooks/use-location.ts` — ip-api + **20-day localStorage cache**, SSR-safe,
+  fail-soft; `estimateDelivery(location)` → ETA label (Amazon "Delivery by Tue").
+- `types.ts` — ShopProduct/ShopVariant/CartLine/CartResponse/WishlistLine + guest shapes.
+- `api/shop-api.ts` — public products + `cartApi`/`wishlistApi` (customer `api` jar).
+- `store/use-cart-store.ts` + `use-wishlist-store.ts` — **Zustand + persist**
+  (guest localStorage), product+variant unique key, optimistic.
+- `hooks/use-cart.ts` + `use-wishlist.ts` — **unified auth-aware**: logged-out →
+  guest store, logged-in → server (TanStack Query), **login pe guest→server MERGE
+  (ek baar, useRef guard) fir guest clear**. Components ko ek hi API milti.
+- `components/add-to-cart-button.tsx` — 3-state (out-of-stock / Add / − qty +
+  stepper) **motion** qty-flip, stock clamp.
+- `components/wishlist-button.tsx` — heart **motion spring pop** + rose fill toggle.
+- `components/product-card.tsx` — Amazon-style: image hover-zoom, **color variant
+  swatches** (hover/click → image+price+stock switch), discount/out-of-stock
+  badge, rating, wishlist overlay, quick-view "eye", add-to-cart (selected variant).
+- `components/product-quick-view.tsx` — screenshot layout: gallery (main+thumbs),
+  brand/rating, color variants, price (sale+MRP strike+% off), qty stepper +
+  add-to-cart + wishlist, stock, **location-based delivery estimate**.
+- `hooks/use-shop-products.ts` + `views/product-grid.tsx` — public grid + shared
+  quick-view modal, skeleton + empty states, container-query responsive.
+- Home page (`app/(shop)/page.tsx`) — ProductGrid wired (newest, 24).
+- `site-header.tsx` — Wishlist/Cart badges ab **live** (`useWishlist`/`useCart`
+  count), pehle static 0 the.
+
+Web `tsc --noEmit` → **exit 0** (zero errors).
+
+**⚠️ Known / next session:**
+1. **ip-api HTTP (mixed content)** — `http://ip-api.com` HTTPS prod pe block hoga.
+   Prod: HTTPS geo provider (ipapi.co) ya Cloudflare `cf-ipcountry` header use karo.
+2. **Cart/Wishlist pages** — `/cart` + `/wishlist` routes abhi nahi (header links
+   point karte). Full cart page (line items + summary + checkout CTA) + wishlist
+   grid banana baaki.
+3. **Multi-currency** — location.currency capture hota hai par prices abhi product
+   currency (INR) me. FX conversion baad me.
+4. **Product detail page** (`/product/[slug]`) — quick-view "View full details"
+   link point karta, page abhi nahi.
+5. **Seed products** — grid khali rahega jab tak ACTIVE products na hon (+ variants
+   with colors taaki swatches dikhein).
+6. Carried over: admin PENDING→ACTIVE approval, orders/inventory, prod cookie
+   domains, Stripe Connect, pre-existing tsc noise.
+
+**Smoke test:**
+```bash
+cd services && pnpm dev
+cd web && pnpm dev   # localhost:3000 (shop)
+# 1. Home pe product grid — ACTIVE products cards (color variants → swatches).
+# 2. Card hover → wishlist heart + quick-view eye. Swatch click → image/price switch.
+# 3. Add to Cart → stepper (− qty +), header cart badge live (guest = localStorage).
+# 4. Heart click → wishlist badge live + toast.
+# 5. Quick-view → gallery + variants + delivery estimate (location se).
+# 6. Login → guest cart/wishlist server me merge ho jaata (localStorage clear).
+```
+
+---
+
+### Session 22 — 2026-06-01 (Storefront polish — banner carousel + card hover-images + variant switch + quick-view fix)
+
+User feedback (reference ProductCard/ProductBanner code + screenshot): card me
+**multiple images hover strip** chahiye (reference jaisa), **variant click pe
+poora product switch** (Amazon red/black → wahi variant), upar **banner carousel**
+(autoplay + framer motion), aur quick-view **close button location chip se overlap**
+fix. Sab apne stack me (reference tRPC+Redux tha).
+
+#### Backend (`modules/product/*`)
+- `product.repository.ts` — naya **`STOREFRONT_SELECT`**: product-level images
+  (saari, variantId null) + **color variants with their images** + category.
+  `list()` me `variant: "seller" | "storefront"` param (default seller light card).
+- `product.service.ts` — `listPublicProducts` → `runList(where, query, "storefront")`;
+  `runList` ko `variant` param. Seller list light hi rehta (CARD_SELECT).
+- Net: public `/products` ab har card pe multiple images + color variants bhejta.
+
+#### Frontend (`features/shop/*`)
+- **product-card.tsx** (rewrite) — reference jaisa **hover thumbnail strip**
+  (thumb hover → main image motion crossfade), **color swatches** (click →
+  variant ka poora image-set + price + stock switch, hoverIdx reset), discount/
+  out-of-stock badge, wishlist + quick-view hover reveal, motion image transition.
+- **product-banner-carousel.tsx** (NEW) — top hero carousel: **dependency-free
+  autoplay** (setInterval 5s, pause-on-hover — embla-autoplay installed nahi tha),
+  framer-motion slide (direction-aware x-slide + fade), prev/next arrows + dot
+  indicators, "popular" products (image wale), Shop Now CTA. Empty pe null.
+- **product-quick-view.tsx** (rewrite) — **close button overlap FIX**: default
+  Dialog close `showCloseButton={false}`, apna custom close header-row me location
+  chip ke saath (ab overlap nahi). Gallery variant-aware (thumb hover/click +
+  motion crossfade), color variants click → image+price switch, delivery estimate.
+- **page.tsx** (home) — `ProductBannerCarousel` grid ke upar wired.
+
+Backend `tsc` clean (mere files; 5 pre-existing noise). Web `tsc --noEmit` → **exit 0**.
+
+**⚠️ Carried / next:**
+1. **Banner = "popular" products** abhi (dedicated banner field/CMS nahi). Real
+   promo banners ke liye Product.bannerUrl ya alag Banner model use kar sakte.
+2. `/cart`, `/wishlist`, `/product/[slug]` **pages** abhi bhi baaki (Session 21).
+3. Seed ACTIVE products **with color variants + multiple images** taaki swatches +
+   hover strip dikhein.
+4. ip-api HTTP mixed-content (Session 21), admin PENDING→ACTIVE, orders — carried.
+
+---
+
+### Session 23 — 2026-06-02 (Storefront UX fixes — swatch/stars/subcategory + cart-wishlist merge correctness)
+
+User feedback (screenshots): light-theme pe deep-blue swatch invisible, review
+stars chahiye, sub-category dikhe, banner Shop-Now hover weak; phir card ka
+category-tag top-left transparent badge, variants me sirf ek dikh raha tha,
+swatch color theme se na badle; aur cart/wishlist guest↔login persistence
+industry-standard hai ya nahi verify.
+
+#### A. Card / quick-view / banner polish
+- **star-rating.tsx** (NEW) — reusable Amazon/Flipkart 5-star (half-star support),
+  card + quick-view dono use karte (pehle manual loop tha).
+- **product-card.tsx** —
+  - Category **TAG ab image ke top-left transparent glass badge** (`bg-black/50
+    backdrop-blur`), subcategory ho to wahi (specific "Mobiles") warna category.
+    Discount/out-of-stock badge usi left-column me niche stack. Content se
+    breadcrumb hata (ab badge me), sirf brand bacha.
+  - **Default/base swatch wapas** (selected=null) — base product ka **ACTUAL
+    color** = `product.colors[0]` hex (image NAHI; pehle thumbnail try kiya tha,
+    user ne color maanga). `colors[]` na ho to default swatch skip. Backend
+    `STOREFRONT_SELECT` me `colors: true` add (type me `colors?: string[]`).
+    Variant fill bhi = **EXACT backend hex** (`style backgroundColor`), sirf patli
+    ring border visibility ke liye (light `ring-black/15` + dark `ring-white/25`).
+    Koi theme conflict nahi — fill pure hex.
+    Issue tha: pehle ke edit me default swatch nikal gaya tha → "sirf ek variant
+    dikhta" — ab default + saare color variants dono dikhte.
+- **product-quick-view.tsx** — wahi swatch fix (default `bg-muted`→image thumbnail,
+  variant `border-transparent`→always-visible ring) taaki white variant bhi dikhe.
+- **product-banner-carousel.tsx** — Shop-Now hover industry-grade (`-translate-y-0.5`
+  lift + `shadow-lg` + arrow slide + active press); category chip me subcategory
+  breadcrumb (`Electronics › Mobiles`, ChevronRight separator).
+
+#### B. Backend subcategory expose
+- `product.repository.ts` `STOREFRONT_SELECT` + `FULL_INCLUDE` me **`subcategory`
+  { id,name,slug }** add (pehle sirf category aati thi). types.ts me already tha.
+
+#### C. Cart/Wishlist guest→login merge — 2 correctness bugs fix (CRITICAL)
+Backend pehle se solid (cart merge additive+stock-clamp, wishlist idempotent,
+null-safe `findFirst` uniqueness, logout pe `qc.clear()`). Bugs frontend
+orchestration me the:
+- **Bug 1 — quantity multiply:** `useCart`/`useWishlist` har card-button me mount
+  hote (grid pe N instances). Merge-guard `useRef` **per-instance** tha → login pe
+  N concurrent merges → cart qty N× ho jaati.
+- **Bug 2 — re-login pe merge skip:** `mergedRef` logout pe reset nahi hota
+  (header mounted rehta) → 2nd login pe guest items kabhi merge nahi hote
+  (orphan in localStorage, silent loss).
+- **Fix:** per-instance `useRef` → **module-level guard** (`cartMerged`/
+  `wishlistMerged`, saare instances me shared, sync-claim → ek hi merge), aur
+  `isAuthed=false` (logout) pe guard **reset** → har login fresh merge. Error pe
+  reset taaki retry ho. `use-cart.ts` + `use-wishlist.ts`.
+
+Result: teeno scenario consistent — (1) guest→login DB merge, (2) login→logout→
+guest→login phir merge (additive), (3) grid pe multi-instance pe koi inflation nahi.
+
+Web `tsc --noEmit` → **exit 0**.
+
+**⚠️ Carried / next:**
+1. `/cart`, `/wishlist`, `/product/[slug]` **pages** abhi bhi baaki.
+2. Optional: guest-add ka `toast.success` mutation `onSuccess` me move (abhi
+   turant fire hota — server-add fail pe double toast aa sakta). Consistency par
+   asar nahi.
+3. Seed ACTIVE products with variants+images; ip-api mixed-content; orders/
+   inventory; admin PENDING→ACTIVE — carried.
